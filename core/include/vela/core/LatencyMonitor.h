@@ -34,7 +34,9 @@ struct LatencyConfig {
 struct LatencySnapshot {
     struct Stage { double p50 = -1, p95 = -1; };   // -1: stage inactive
 
-    double sourceFps = 0, outputFps = 0;
+    double signalFps = 0;       // HDMI frames per second from the card
+    double sourceFps = 0;       // new pictures per second (content rate)
+    double outputFps = 0;
     RollingStats::Summary sourceInterval;   // ms between capture callbacks
     RollingStats::Summary captureCopy;      // ms, CPU: callback -> upload ring
     RollingStats::Summary pipeline;         // ms, capture callback -> Present of the real frame
@@ -61,7 +63,8 @@ public:
 
     void setFrameGeneration(unsigned multiplier) { multiplier_ = multiplier; }
 
-    void onSourceFrame(Micros arrival, double copyMs);
+    void onSignalFrame(Micros arrival);                 // every captured frame, repeats included
+    void onSourceFrame(Micros arrival, double copyMs);  // new pictures the pipeline processes
     void onSourceDropped(uint64_t count) { droppedSource_ += count; }
     void onGpuBatch(Micros now, const std::array<double, static_cast<size_t>(GpuStage::Count)>& stageMs, double totalMs);
     void onPresent(Micros presentTime, Micros sourceArrival, bool generated);
@@ -79,7 +82,7 @@ private:
         RollingStats(240), RollingStats(240), RollingStats(240), RollingStats(240),
         RollingStats(240), RollingStats(240), RollingStats(240)};
     std::array<Micros, static_cast<size_t>(GpuStage::Count)> stageSeen_{};
-    std::deque<Micros> sourceTimes_, presentTimes_;
+    std::deque<Micros> signalTimes_, sourceTimes_, presentTimes_;
     Micros lastSource_ = -1, lastPresent_ = -1;
     uint64_t sourceFrames_ = 0, droppedSource_ = 0, presented_ = 0, presentedGenerated_ = 0, droppedGenerated_ = 0;
 };

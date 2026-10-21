@@ -50,8 +50,9 @@
     'color.strength': (v) => `${Math.round(v * 100)}%`,
     'capture.volume': (v) => `${Math.round(v * 100)}%`,
   };
+  const contentName = { auto: '自动', 30: '30 fps', 60: '60 fps', 120: '120 fps' };
   const ms = (v, digits = 1) => (v == null || !(v >= 0) ? '—' : v.toFixed(digits));
-  const fps = (v) => (v > 0 ? `${v.toFixed(v >= 100 ? 0 : 1)}` : '—');
+  const fps = (v) => (!(v > 0) ? '—' : Math.abs(v - Math.round(v)) < 0.05 || v >= 100 ? `${Math.round(v)}` : v.toFixed(1));
   const res = (w, h) => (w && h ? `${w}×${h}` : '—');
   const hdrName = { passthrough: 'HDR10 直通', rtxHdr: 'RTX HDR', toneMap: '映射为 SDR', sdr: 'SDR' };
   const srName = { videoSr: 'RTX Video', dlss: 'DLSS', none: '—' };
@@ -86,7 +87,7 @@
     for (const b of $$('#fg-multiplier button')) b.disabled = !allowed.has(Number(b.dataset.value));
     const maxCap = caps?.fgMaxMultiplier ?? 0;
     $('#fg-multiplier-hint').textContent = allowed.size
-      ? `可用 ${[...allowed].map((m) => `${m}×`).join(' / ')}，受显示器刷新率 ${view.display?.refreshHz ?? '—'} Hz 与驱动上限 ${maxCap}× 限制。`
+      ? `按内容帧率计算：${fps(p?.contentFps)} fps × ${p?.multiplier ?? '—'} = ${fps(p?.outputFps)} fps。可用 ${[...allowed].map((m) => `${m}×`).join(' / ')}，受显示器 ${view.display?.refreshHz ?? '—'} Hz 与驱动上限 ${maxCap}× 限制。`
       : '当前不可用，原因见下方提示。';
     $('#fg-compression-field').hidden = s.frameGen.pacing !== 'lowLatency';
 
@@ -102,15 +103,17 @@
     const live = src && src.signal;
     $('#signal-dot').classList.toggle('live', !!live);
     $('#chain-device').textContent = view.devices.find((d) => d.path === s.capture.device)?.name ?? '未选择设备';
+    const content = p?.contentFps && src && p.contentFps < src.fps - 0.5 ? ` · 内容 ${fps(p.contentFps)} fps` : '';
     $('#chain-in').textContent = live
-      ? `${res(src.width, src.height)} · ${fps(src.fps)} Hz · ${src.hdr ? 'HDR10' : 'SDR'}`
+      ? `${res(src.width, src.height)} · ${fps(src.fps)} Hz · ${src.hdr ? 'HDR10' : 'SDR'}${content}`
       : '无信号';
+    $('#nosignal').hidden = !!live;
     $('#chain-out').textContent = live && p ? `${res(p.outputWidth, p.outputHeight)} · ${fps(p.outputFps)} fps` : '—';
 
     // frame generation summary + facts
     $('#fg-summary').innerHTML = !s.frameGen.enabled ? '帧生成已关闭，画面按源帧率输出。'
       : p?.frameGenBlocked ? '帧生成暂不可用。'
-      : `源 <strong>${fps(src?.fps)} fps</strong> → 输出 <strong>${fps(p?.outputFps)} fps</strong>，每两帧真实画面之间插入 ${p.multiplier - 1} 帧。`;
+      : `内容 <strong>${fps(p?.contentFps)} fps</strong> → 输出 <strong>${fps(p?.outputFps)} fps</strong>，每两帧不同的画面之间插入 ${p.multiplier - 1} 帧。`;
     renderFgFacts();
 
     // super resolution
@@ -158,6 +161,7 @@
       ['驱动上限', caps?.fgMaxMultiplier ? `${caps.fgMaxMultiplier}×` : '不可用'],
       ['光流', caps?.opticalFlow ? 'NVOF 硬件光流' : '不可用'],
       ['额外延迟', tm && tm.fgAddedMs > 0 ? `≈ ${ms(tm.fgAddedMs)} ms` : '—'],
+      ['跳过的重复画面', tm ? String(tm.repeats ?? 0) : '—'],
     ]);
   }
 
@@ -196,7 +200,7 @@
       hv.className = `hud-value ${cls}`;
       $('#hud-label').textContent = tm.calibrated ? '端到端估算' : '端到端估算 · 未校准';
       $('#hud-fps').textContent = fps(tm.outputFps);
-      $('#hud-src').textContent = fps(tm.sourceFps);
+      $('#hud-src').textContent = fps(tm.contentFps || tm.sourceFps);
       $('#hud-p95').textContent = `${ms(tm.pipeline.p95)}`;
       $('#hud-gpu').textContent = `${ms(tm.gpuTotal.p50, 2)}`;
       spark($('#hud-spark'), tm.intervals.slice(-120), tm.outputFps, false);
@@ -242,7 +246,12 @@
         ['已呈现', `${tm.presented}（生成 ${tm.presentedGenerated}）`],
       ]);
     }
-    if (view.tab === 'frameGen') renderFgFacts();
+    if (view.tab === 'frameGen') {
+      renderFgFacts();
+      const mode = view.settings.frameGen.contentRate;
+      $('#fg-detected').textContent = tm.detectedFps > 0
+        ? `检测到 ${fps(tm.detectedFps)} fps${mode !== 'auto' ? `（手动 ${contentName[mode]}）` : ''}` : '检测中…';
+    }
     if (view.tab === 'color') renderColor();
   }
 
@@ -326,7 +335,9 @@
     const app = $('#app');
     if (app.dataset.ui !== 'shown') { app.dataset.ui = 'shown'; bridge.send({ type: 'ui', visible: true }); }
     clearTimeout(hideTimer);
-    hideTimer = setTimeout(() => { if ($('#drawer').hidden && !$('#dock').matches(':hover')) hideUi(); }, 4000);
+    hideTimer = setTimeout(() => {
+      if ($('#drawer').hidden && !$('#dock').matches(':hover') && view.source?.signal !== false) hideUi();
+    }, 4000);
   }
   function hideUi() {
     clearTimeout(hideTimer);
@@ -400,6 +411,7 @@
       if (e.key === 'Enter' && e.altKey) return bridge.send({ type: 'command', name: 'toggleFullscreen' });
       if (e.key === 'f' || e.key === 'F') return set('frameGen.enabled', !view.settings.frameGen.enabled);
       if (e.key === 'l' || e.key === 'L') return set('latency.hud', !view.settings.latency.hud);
+      if (e.key === 'm' || e.key === 'M') return set('capture.muted', !view.settings.capture.muted);
       if (/^[2-6]$/.test(e.key) && view.plan?.multipliers?.includes(Number(e.key))) set('frameGen.multiplier', Number(e.key));
     });
   }
@@ -417,6 +429,12 @@
       renderTelemetry();
     } else if (msg.type === 'toast') {
       toast(msg.text);
+    } else if (msg.type === 'flash') {
+      // Hotkey feedback while playing: notice only, then out of the way.
+      clearTimeout(hideTimer);
+      $('#app').dataset.ui = 'flash';
+      toast(msg.text);
+      hideTimer = setTimeout(() => { if ($('#app').dataset.ui === 'flash') hideUi(); }, 1500);
     } else if (msg.type === 'ui') {
       msg.visible ? showUi() : hideUi();
     }
@@ -444,12 +462,12 @@
       { key: '1920x1080@60:nv12', label: '1920×1080 · 60 Hz · NV12' },
     ];
     const settings = {
-      frameGen: { enabled: true, multiplier: 2, pacing: 'even', compression: 0.35, reflex: true, performanceMode: false },
+      frameGen: { enabled: true, multiplier: 4, contentRate: 'auto', pacing: 'even', compression: 0.35, reflex: true, performanceMode: false },
       latency: { hud: true, hudCorner: 1, captureHardwareMs: 0, displayProcessingMs: 0 },
       superRes: { enabled: true, quality: 4, sharpness: 0 },
       hdr: { mode: 'auto', rtxHdr: true, peakNits: 1000, contrast: 100, saturation: 100, middleGray: 50 },
       color: { enabled: true, strength: 0.5, levels: true, whiteBalance: true, vibrance: true, speed: 'normal' },
-      capture: { device: 'demo-4kpro', mode: 'auto', audio: true, volume: 0.8 },
+      capture: { device: 'demo-4kpro', mode: 'auto', audio: true, volume: 0.8, muted: false },
       display: { sync: 'vrr', fullscreen: true },
     };
     const caps = { gpu: 'NVIDIA GeForce RTX 5070 Ti', vramMB: 16303, fgMaxMultiplier: 6, videoSr: true, dlssSr: true,
@@ -473,8 +491,15 @@
                colorspace: hdr ? 'HDR10 · BT.2020 PQ' : 'SDR · BT.709', maxCll: hdr ? 1000 : 0, maxFall: hdr ? 400 : 0 };
     }
 
+    // The demo game renders at 30 fps in 60 Hz signals and 60 fps in 120 Hz ones.
+    const detected = (src) => (src.fps <= 60 ? 30 : 60);
+    function contentFps(src) {
+      const m = settings.frameGen.contentRate;
+      return Math.min(m === 'auto' ? detected(src) : Number(m), src.fps);
+    }
     function plan(src) {
       const notes = [];
+      const content = contentFps(src);
       let hdrPath = 'sdr';
       if (src.hdr) hdrPath = settings.hdr.mode === 'off' || !display.hdr ? 'toneMap' : 'passthrough';
       else if (settings.hdr.mode === 'auto' && display.hdr && settings.hdr.rtxHdr) hdrPath = 'rtxHdr';
@@ -488,15 +513,15 @@
       const capByRefresh = settings.display.sync !== 'tearing';
       const multipliers = [];
       for (let m = 2; m <= Math.min(caps.fgMaxMultiplier, 6); m++)
-        if (!capByRefresh || src.fps * m <= display.refreshHz * 1.01) multipliers.push(m);
+        if (!capByRefresh || content * m <= display.refreshHz * 1.01) multipliers.push(m);
       let multiplier = 1;
       if (settings.frameGen.enabled && multipliers.length) {
         multiplier = multipliers[0];
         for (const m of multipliers) if (m <= settings.frameGen.multiplier) multiplier = m;
         if (multiplier !== settings.frameGen.multiplier) notes.push(`补帧倍数已按刷新率限制为 ${multiplier}×`);
       } else if (settings.frameGen.enabled) notes.push('显示器刷新率不足以容纳 2× 补帧');
-      return { outputWidth: outW, outputHeight: outH, superRes: sr, hdr: hdrPath, multipliers, multiplier,
-               outputFps: src.fps * multiplier, frameGenBlocked: settings.frameGen.enabled && multiplier < 2, notes };
+      return { outputWidth: outW, outputHeight: outH, superRes: sr, hdr: hdrPath, multipliers, multiplier, contentFps: content,
+               outputFps: content * multiplier, frameGenBlocked: settings.frameGen.enabled && multiplier < 2, notes };
     }
 
     function publishState() {
@@ -506,7 +531,7 @@
 
     // telemetry --------------------------------------------------------
     const intervals = [];
-    const counters = { sourceFrames: 0, presented: 0, presentedGenerated: 0, droppedGenerated: 0 };
+    const counters = { sourceFrames: 0, presented: 0, presentedGenerated: 0, droppedGenerated: 0, repeats: 0 };
     const color = { blackPoint: 0, whitePoint: 1, gamma: 1, gainR: 1, gainG: 1, gainB: 1, saturation: 1 };
     let t0 = performance.now();
     const n = (sd = 0.05) => 1 + (Math.random() * 2 - 1) * sd;
@@ -519,7 +544,7 @@
       const src = source();
       const p = plan(src);
       const mult = p.multiplier;
-      const T = 1000 / src.fps;
+      const T = 1000 / p.contentFps;
       const inScale = (src.width * src.height) / 8294400;
       const outScale = (p.outputWidth * p.outputHeight) / 8294400;
       const st = {
@@ -548,7 +573,8 @@
         intervals.push(Math.max(0.3, v + (Math.random() - 0.5) * 0.25));
       }
       while (intervals.length > 960) intervals.shift();
-      counters.sourceFrames += Math.round(src.fps * dt);
+      counters.sourceFrames += Math.round(p.contentFps * dt);
+      counters.repeats += mult > 1 ? Math.round((src.fps - p.contentFps) * dt) : 0;
       counters.presented += count;
       counters.presentedGenerated += Math.round(count * (mult - 1) / mult);
 
@@ -562,7 +588,8 @@
 
       const sorted = intervals.slice(-240).sort((x, y) => x - y);
       emit({ type: 'telemetry', t: {
-        sourceFps: src.fps * n(0.002), outputFps: p.outputFps * n(0.002),
+        signalFps: src.fps * n(0.002), sourceFps: p.contentFps * n(0.002), outputFps: p.outputFps * n(0.002),
+        contentFps: p.contentFps, detectedFps: detected(src),
         pipeline: pct(pipeline, 0.02), captureCopy: pct(copy, 0.12), gpuTotal: pct(gpu, 0.06),
         presentInterval: { p50: sorted[Math.floor(sorted.length * 0.5)] ?? 0, p99: sorted[Math.floor(sorted.length * 0.99)] ?? 0 },
         stages: st, scanoutMs: scanout,
@@ -580,7 +607,7 @@
         if (msg.type === 'hello') { publishState(); setInterval(tick, 100); }
         else if (msg.type === 'set') {
           setPath(settings, msg.path, msg.value);
-          if (msg.path === 'frameGen.multiplier' || msg.path.startsWith('capture.') || msg.path.startsWith('display.') ||
+          if (msg.path === 'frameGen.multiplier' || msg.path === 'frameGen.contentRate' || msg.path.startsWith('capture.') || msg.path.startsWith('display.') ||
               msg.path.startsWith('hdr.') || msg.path.startsWith('superRes.') || msg.path === 'frameGen.enabled') publishState();
         } else if (msg.type === 'command' && msg.name === 'resetStats') {
           intervals.length = 0;
@@ -606,7 +633,7 @@
       requestAnimationFrame(frame);
       const s = view.settings, src = view.source, p = view.plan;
       const fgOn = s && s.frameGen.enabled && p && p.multiplier > 1;
-      const srcFps = src?.fps || 60;
+      const srcFps = p?.contentFps || src?.fps || 60;   // the game's own rate
       const t = now / 1000;
       if (!fgOn && t - lastStep < 1 / srcFps - 0.0005) return;
       lastStep = fgOn ? t : Math.floor(t * srcFps) / srcFps;

@@ -14,6 +14,7 @@ TEST(latency_monitor_rates_and_pipeline) {
     Micros now = 0;
     for (int i = 0; i < 120; ++i) {
         const Micros arrival = fromMs(i * 1000.0 / 60);
+        m.onSignalFrame(arrival);
         m.onSourceFrame(arrival, 1.1);
         std::array<double, idx(GpuStage::Count)> stages;
         stages.fill(-1);
@@ -28,6 +29,7 @@ TEST(latency_monitor_rates_and_pipeline) {
     }
     const auto s = m.snapshot(now);
     CHECK_NEAR(s.sourceFps, 60, 0.5);
+    CHECK_NEAR(s.signalFps, 60, 0.5);
     CHECK_NEAR(s.outputFps, 120, 1.0);
     CHECK_NEAR(s.pipeline.p50, 20, 0.01);
     CHECK_NEAR(s.sourceInterval.p50, 16.667, 0.01);

@@ -3,6 +3,7 @@
 #include <string>
 
 #include "vela/core/AutoColor.h"
+#include "vela/core/ContentCadence.h"
 #include "vela/core/FramePacer.h"
 
 namespace vela::core {
@@ -14,7 +15,8 @@ namespace vela::core {
 
 struct FrameGenSettings {
     bool enabled = true;
-    unsigned multiplier = 2;            // 2..6, further limited by GPU caps and display refresh
+    unsigned multiplier = 2;            // 2..6 times the content rate, limited by GPU caps and display refresh
+    ContentRate contentRate = ContentRate::Auto;   // game frame rate inside the signal
     PacingMode pacing = PacingMode::Even;
     float compression = 0.35f;          // LowLatency pacing only
     bool reflex = true;                 // NVIDIA Reflex low-latency mode on the present queue
@@ -53,12 +55,14 @@ struct CaptureSettings {
     bool preferHdr = true;              // P010 when the source sends HDR
     bool audio = true;
     float volume = 1.0f;
+    bool muted = false;
 };
 
 enum class SyncMode : uint8_t { Vrr = 0, VSync = 1, Tearing = 2 };
 struct DisplaySettings {
     SyncMode sync = SyncMode::Vrr;
     bool fullscreen = true;
+    std::wstring monitor;               // device name of the monitor to go fullscreen on
 };
 
 struct Settings {

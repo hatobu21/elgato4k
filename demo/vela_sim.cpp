@@ -177,6 +177,7 @@ int main(int argc, char** argv) {
         {"PS5 4K60 HDR  ->  4K 240Hz HDR 显示器, 4x", {3840, 2160, 60, true}, {3840, 2160, 240, true, true}, 4, PacingMode::Even, 0},
         {"PS5 4K60 HDR  ->  4K 240Hz, 4x 低延迟节奏", {3840, 2160, 60, true}, {3840, 2160, 240, true, true}, 4, PacingMode::LowLatency, 0},
         {"PS5 1440p120 SDR  ->  4K 240Hz (超分 + 2x)", {2560, 1440, 120, false}, {3840, 2160, 240, false, true}, 2, PacingMode::Even, 0},
+        {"PS5 4K 画质模式: 60Hz 信号中 30fps 内容, 4x -> 120fps", {3840, 2160, 30, true}, {3840, 2160, 144, true, true}, 4, PacingMode::Even, 0},
         {"NS2 1080p60 SDR  ->  4K 240Hz HDR (超分 + RTX HDR + 4x)", {1920, 1080, 60, false}, {3840, 2160, 240, true, true}, 4, PacingMode::Even, 0},
         {"NS2 4K60 HDR  ->  4K 144Hz HDR, 补帧关", {3840, 2160, 60, true}, {3840, 2160, 144, true, true}, 1, PacingMode::Even, 0},
     };

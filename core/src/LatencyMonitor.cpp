@@ -31,10 +31,16 @@ void LatencyMonitor::reset() {
     gpuTotal_.clear();
     for (auto& s : stages_) s.clear();
     stageSeen_.fill(0);
+    signalTimes_.clear();
     sourceTimes_.clear();
     presentTimes_.clear();
     lastSource_ = lastPresent_ = -1;
     sourceFrames_ = droppedSource_ = presented_ = presentedGenerated_ = droppedGenerated_ = 0;
+}
+
+void LatencyMonitor::onSignalFrame(Micros arrival) {
+    signalTimes_.push_back(arrival);
+    trim(signalTimes_, arrival);
 }
 
 void LatencyMonitor::onSourceFrame(Micros arrival, double copyMs) {
@@ -85,6 +91,7 @@ double LatencyMonitor::rate(const std::deque<Micros>& times, Micros now) {
 
 LatencySnapshot LatencyMonitor::snapshot(Micros now) const {
     LatencySnapshot s;
+    s.signalFps = rate(signalTimes_, now);
     s.sourceFps = rate(sourceTimes_, now);
     s.outputFps = rate(presentTimes_, now);
     s.sourceInterval = sourceInterval_.summary();

@@ -2,6 +2,7 @@
 
 #include "base/Log.h"
 
+#include <algorithm>
 #include <cstring>
 #include <format>
 
@@ -72,6 +73,7 @@ bool Pipeline::build(gfx::Device& device, nv::NgxCore* ngx, const PipelineConfig
     outFormat_ = plan.hdr == core::HdrPath::Passthrough || plan.hdr == core::HdrPath::RtxHdr
         ? DXGI_FORMAT_R10G10B10A2_UNORM : DXGI_FORMAT_R8G8B8A8_UNORM;
     multiplier_ = plan.multiplier;
+    maxMultiplier_ = multiplier_ > 1 ? std::clamp(config.maxMultiplier, multiplier_, kMaxGenerated + 1) : 1;
     flow_ = multiplier_ > 1 || plan.superRes == core::SrPath::Dlss;
     flowStep_ = inW_ > 1920 ? 2 : 1;   // 4K flows at 1080p: NVOF cost /4, quality holds
     flowW_ = inW_ / flowStep_;
@@ -125,7 +127,7 @@ bool Pipeline::createResources() {
         scrgb_ = d.texture(outW_, outH_, DXGI_FORMAT_R16G16B16A16_FLOAT, true, L"vela.scrgb");
     for (uint32_t s = 0; s < kBatchSlots; ++s) {
         real_[s] = d.texture(outW_, outH_, outFormat_, true, L"vela.real");
-        for (unsigned k = 0; k + 1 < multiplier_; ++k)
+        for (unsigned k = 0; k + 1 < maxMultiplier_; ++k)
             generated_[s][k] = d.texture(outW_, outH_, outFormat_, true, L"vela.generated");
     }
     if (flow_) {
@@ -191,7 +193,7 @@ bool Pipeline::createDescriptors() {
         encodeUavReal_[s] = colorUavReal_[s];   // same view, same texture
         realSrv_[s] = d.allocate(1);
         d.srv(realSrv_[s], real_[s]);
-        for (unsigned k = 0; k + 1 < multiplier_; ++k) {
+        for (unsigned k = 0; k + 1 < maxMultiplier_; ++k) {
             generatedSrv_[s][k] = d.allocate(1);
             d.srv(generatedSrv_[s][k], generated_[s][k]);
         }
@@ -260,6 +262,18 @@ bool Pipeline::createFeatures() {
             return false;
         }
     }
+    return true;
+}
+
+bool Pipeline::updatePlan(const core::Plan& plan) {
+    const auto& p = config_.plan;
+    if (!built_ || plan.outputWidth != p.outputWidth || plan.outputHeight != p.outputHeight ||
+        plan.superRes != p.superRes || plan.hdr != p.hdr || (plan.multiplier > 1) != (multiplier_ > 1) ||
+        plan.multiplier > maxMultiplier_)
+        return false;
+    if (plan.multiplier != multiplier_) historyValid_ = false;   // DLSS-G restarts its history
+    multiplier_ = plan.multiplier;
+    config_.plan = plan;
     return true;
 }
 

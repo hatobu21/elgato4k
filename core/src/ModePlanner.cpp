@@ -91,6 +91,7 @@ Plan planPipeline(const CaptureMode& capture, const DisplayInfo& display, const 
         if (plan.multiplier != fg.multiplier) plan.notes.push_back("补帧倍数已按刷新率限制为 " + std::to_string(plan.multiplier) + "×");
     }
     plan.frameGenBlocked = fg.enabled && plan.multiplier < 2;
+    plan.contentFps = fps;
     plan.outputFps = fps * plan.multiplier;
 
     // Rough VRAM estimate (MB) so the UI can warn before a 16 GB card runs out.

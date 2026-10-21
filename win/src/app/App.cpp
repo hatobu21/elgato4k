@@ -8,6 +8,16 @@
 namespace vela::app {
 namespace {
 constexpr wchar_t kClass[] = L"VelaVideo";
+
+struct MonitorSearch { const std::wstring* name; HMONITOR found; };
+BOOL CALLBACK findMonitor(HMONITOR m, HDC, LPRECT, LPARAM p) {
+    auto* s = reinterpret_cast<MonitorSearch*>(p);
+    MONITORINFOEXW mi{};
+    mi.cbSize = sizeof(mi);
+    if (GetMonitorInfoW(m, &mi) && *s->name == mi.szDevice) { s->found = m; return FALSE; }
+    return TRUE;
+}
+std::string escape(const std::string& text) { return nlohmann::json(text).dump(); }
 constexpr UINT kStateChanged = WM_APP + 1;
 constexpr UINT_PTR kTelemetryTimer = 1, kSaveTimer = 2, kHideTimer = 3;
 } // namespace
@@ -28,8 +38,18 @@ int App::run(core::Settings settings) {
     const int x = (GetSystemMetrics(SM_CXSCREEN) - w) / 2, y = (GetSystemMetrics(SM_CYSCREEN) - h) / 2;
     video_ = CreateWindowExW(0, kClass, L"Vela", WS_OVERLAPPEDWINDOW, x, y, w, h, nullptr, nullptr, wc.hInstance, this);
     if (!video_) return 1;
+    // Reopen on the monitor used last time, then go fullscreen there.
+    if (!settings_.display.monitor.empty()) {
+        MonitorSearch search{&settings_.display.monitor, nullptr};
+        EnumDisplayMonitors(nullptr, nullptr, findMonitor, LPARAM(&search));
+        MONITORINFO mi{sizeof(mi)};
+        if (search.found && GetMonitorInfoW(search.found, &mi))
+            SetWindowPos(video_, nullptr, mi.rcWork.left + 40, mi.rcWork.top + 40, w, h, SWP_NOZORDER);
+    }
     ShowWindow(video_, SW_SHOW);
     if (settings_.display.fullscreen) setFullscreen(true);
+    // A player: keep the display and the PC awake while it runs.
+    SetThreadExecutionState(ES_CONTINUOUS | ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED);
 
     engine_.onStateChanged = [this] { PostMessageW(video_, kStateChanged, 0, 0); };
     engine_.start(video_, settings_);
@@ -44,6 +64,7 @@ int App::run(core::Settings settings) {
         TranslateMessage(&msg);
         DispatchMessageW(&msg);
     }
+    SetThreadExecutionState(ES_CONTINUOUS);
     return int(msg.wParam);
 }
 
@@ -52,8 +73,10 @@ void App::setFullscreen(bool on) {
     fullscreen_ = on;
     if (on) {
         GetWindowRect(video_, &windowed_);
-        MONITORINFO mi{sizeof(mi)};
+        MONITORINFOEXW mi{};
+        mi.cbSize = sizeof(mi);
         GetMonitorInfoW(MonitorFromWindow(video_, MONITOR_DEFAULTTONEAREST), &mi);
+        settings_.display.monitor = mi.szDevice;
         // Borderless window covering the monitor: Windows 11 promotes it to
         // independent flip whenever nothing else is drawn over it.
         SetWindowLongPtrW(video_, GWL_STYLE, WS_POPUP | WS_VISIBLE);
@@ -64,6 +87,8 @@ void App::setFullscreen(bool on) {
         SetWindowPos(video_, nullptr, windowed_.left, windowed_.top, windowed_.right - windowed_.left,
                      windowed_.bottom - windowed_.top, SWP_FRAMECHANGED | SWP_NOZORDER);
     }
+    settings_.display.fullscreen = on;
+    SetTimer(video_, kSaveTimer, 1000, nullptr);
     overlay_.follow();
 }
 
@@ -76,6 +101,16 @@ void App::showUi(bool visible) {
     } else {
         // Let the page's fade finish, then take the window off screen.
         SetTimer(video_, kHideTimer, 300, nullptr);
+    }
+}
+
+void App::flash(const std::string& text) {
+    // Hotkey feedback while playing: only a short notice, no dock or panels.
+    if (!overlay_.visible()) {
+        overlay_.show(true);
+        overlay_.post(R"({"type":"flash","text":)" + escape(text) + "}");
+    } else {
+        overlay_.post(R"({"type":"toast","text":)" + escape(text) + "}");
     }
 }
 
@@ -113,9 +148,19 @@ LRESULT CALLBACK App::proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
 
 LRESULT App::handle(UINT msg, WPARAM wp, LPARAM lp) {
     switch (msg) {
-    case kStateChanged:
-        overlay_.post(stateMessage(engine_.state()));
+    case kStateChanged: {
+        const auto state = engine_.state();
+        // No signal: keep the interface up so the reason is on screen.
+        if (!state.source.signal && !overlay_.visible()) showUi(true);
+        overlay_.post(stateMessage(state));
         return 0;
+    }
+    case WM_SETCURSOR:
+        if (LOWORD(lp) == HTCLIENT && fullscreen_ && !overlay_.visible()) {
+            SetCursor(nullptr);   // no cursor over the picture while playing
+            return TRUE;
+        }
+        break;
     case WM_TIMER:
         if (wp == kTelemetryTimer && overlay_.visible()) overlay_.post(telemetryMessage(engine_.telemetry()));
         else if (wp == kSaveTimer) { KillTimer(video_, kSaveTimer); saveSettings(settings_); }
@@ -141,12 +186,31 @@ LRESULT App::handle(UINT msg, WPARAM wp, LPARAM lp) {
         auto next = settings_;
         switch (wp) {
         case VK_HOME: showUi(!overlay_.visible()); return 0;
-        case 'F': next.frameGen.enabled = !next.frameGen.enabled; change(next); return 0;
-        case 'L': next.latency.hud = !next.latency.hud; change(next); return 0;
+        case 'F':
+            next.frameGen.enabled = !next.frameGen.enabled;
+            change(next);
+            flash(next.frameGen.enabled ? "补帧 开" : "补帧 关");
+            return 0;
+        case 'L':
+            next.latency.hud = !next.latency.hud;
+            change(next);
+            flash(next.latency.hud ? "延迟角标 开" : "延迟角标 关");
+            return 0;
+        case 'M':
+            next.capture.muted = !next.capture.muted;
+            change(next);
+            flash(next.capture.muted ? "静音" : "取消静音");
+            return 0;
         case VK_ESCAPE: if (fullscreen_) setFullscreen(false); return 0;
         default: break;
         }
-        if (wp >= '2' && wp <= '6') { next.frameGen.multiplier = unsigned(wp - '0'); change(next); return 0; }
+        if (wp >= '2' && wp <= '6') {
+            next.frameGen.enabled = true;
+            next.frameGen.multiplier = unsigned(wp - '0');
+            change(next);
+            flash("补帧 " + std::to_string(next.frameGen.multiplier) + "×");
+            return 0;
+        }
         break;
     }
     case WM_SYSKEYDOWN:

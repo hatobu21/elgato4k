@@ -17,6 +17,7 @@ endif()
 # Platform-neutral logic: pacing, latency statistics, auto colour, planning.
 add_library(vela_core STATIC
   core/src/AutoColor.cpp
+  core/src/ContentCadence.cpp
   core/src/FramePacer.cpp
   core/src/LatencyMonitor.cpp
   core/src/ModePlanner.cpp
@@ -29,6 +30,7 @@ if(VELA_BUILD_TESTS)
   add_executable(vela_core_tests
     core/tests/TestMain.cpp
     core/tests/AutoColorTests.cpp
+    core/tests/ContentCadenceTests.cpp
     core/tests/FramePacerTests.cpp
     core/tests/LatencyMonitorTests.cpp
     core/tests/ModePlannerTests.cpp)

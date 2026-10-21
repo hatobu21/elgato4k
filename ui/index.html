@@ -36,7 +36,7 @@
     <div class="hud-label" id="hud-label">端到端估算</div>
     <dl class="hud-grid">
       <div><dt>输出</dt><dd id="hud-fps">—</dd></div>
-      <div><dt>源</dt><dd id="hud-src">—</dd></div>
+      <div><dt>内容</dt><dd id="hud-src">—</dd></div>
       <div><dt>管线 P95</dt><dd id="hud-p95">—</dd></div>
       <div><dt>GPU</dt><dd id="hud-gpu">—</dd></div>
     </dl>
@@ -82,6 +82,10 @@
       </button>
     </div>
     <div class="dock-tools">
+      <button class="icon-btn" id="mute-btn" data-toggle="capture.muted" aria-label="静音" title="静音 (M)">
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-sound"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/></svg>
+        <svg viewBox="0 0 24 24" aria-hidden="true" class="icon-muted"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+      </button>
       <button class="icon-btn" data-open="device" aria-label="设备与显示" title="设备与显示">
         <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
       </button>
@@ -117,6 +121,13 @@
           <label class="switch"><input type="checkbox" id="fg-enabled" data-path="frameGen.enabled"><span></span></label>
         </div>
         <p class="lede" id="fg-summary">—</p>
+        <div class="field">
+          <div class="field-label">内容帧率 <output id="fg-detected"></output></div>
+          <div class="seg" data-path="frameGen.contentRate">
+            <button data-value="auto">自动</button><button data-value="30">30</button><button data-value="60">60</button><button data-value="120">120</button>
+          </div>
+          <p class="hint">游戏帧率低于信号时（例如 60 Hz 信号里跑 30 fps），重复的画面会被跳过，只在真正不同的两帧之间补帧。自动：持续检测，游戏切换帧率后约 1 秒跟上。</p>
+        </div>
         <div class="field">
           <div class="field-label">倍数</div>
           <div class="seg seg-wide" id="fg-multiplier" data-path="frameGen.multiplier" data-type="int">
@@ -293,6 +304,11 @@
       </div>
     </div>
   </section>
+
+  <div class="nosignal" id="nosignal" hidden>
+    <div class="nosignal-title">没有信号</div>
+    <p id="nosignal-detail">检查主机是否开机、HDMI 是否接在采集卡的输入口，以及采集卡是否被其他程序占用。</p>
+  </div>
 
   <div class="toast" id="toast" role="status" hidden></div>
 </div>

@@ -30,6 +30,9 @@ struct PipelineConfig {
     capture::Mode mode;
     capture::SignalInfo signal;
     core::Settings settings;
+    // Generated frame textures are allocated for this many, so a change of
+    // the content rate or of the multiplier switches without a rebuild.
+    unsigned maxMultiplier = 2;
 };
 
 struct FrameOut {
@@ -58,6 +61,9 @@ public:
     const PipelineConfig& config() const { return config_; }
     // Values read per frame (SR quality, sharpness, RTX HDR tuning); no rebuild.
     void updateSettings(const core::Settings& settings) { config_.settings = settings; }
+    // Same routes and sizes, different multiplier (content rate or user
+    // change). False if the new plan needs a rebuild instead.
+    bool updatePlan(const core::Plan& plan);
 
     // CPU-visible upload slot the capture thread copies a frame into.
     uint8_t* uploadPointer(uint32_t slot) const { return uploadPtr_[slot]; }
@@ -91,7 +97,7 @@ private:
 
     uint32_t inW_ = 0, inH_ = 0, outW_ = 0, outH_ = 0, flowW_ = 0, flowH_ = 0, flowStep_ = 1;
     DXGI_FORMAT outFormat_ = DXGI_FORMAT_R8G8B8A8_UNORM;
-    unsigned multiplier_ = 1;
+    unsigned multiplier_ = 1, maxMultiplier_ = 1;
     bool srcHdr_ = false, flow_ = false;
     uint32_t colorMode_ = 0;
 

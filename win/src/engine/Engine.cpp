@@ -7,6 +7,7 @@
 #include <mfapi.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <format>
@@ -85,6 +86,10 @@ EngineTelemetry Engine::telemetry() const {
     t.latency = monitor_.snapshot(nowMicros());
     t.intervals.assign(intervals_.begin(), intervals_.end());
     t.color = color_;
+    std::lock_guard cadenceLock(cadenceMutex_);
+    t.contentFps = cadence_.contentFps();
+    t.detectedFps = cadence_.detectedFps();
+    t.repeats = cadence_.repeats();
     return t;
 }
 
@@ -126,15 +131,18 @@ void Engine::run() {
                 }
                 const bool deviceChanged = previous.capture.devicePath != next->capture.devicePath;
                 const auto& p = pipeline_.config();
-                // Recompute what the new settings would run; rebuild only on a difference.
-                const auto modes = source_.modes();
-                const bool wantP010 = signal_.hdr && next->capture.preferHdr && display_.hdr && next->hdr.mode == core::HdrMode::Auto;
-                const auto mode = capture::Source::choose(modes, next->capture.width, next->capture.height, next->capture.fps, wantP010);
-                const bool srcHdr = mode.format == capture::PixelFormat::P010 && signal_.hdr;
-                const auto plan = core::planPipeline({mode.width, mode.height, mode.fps(), srcHdr}, display_, caps_, *next);
-                if (deviceChanged || !sameMode(mode, p.mode) || !samePlan(plan, p.plan) ||
+                {
+                    std::lock_guard lock(cadenceMutex_);
+                    cadence_.configure(next->frameGen.contentRate, p.mode.fps());
+                }
+                // Recompute what the new settings would run; rebuild only when
+                // routes or sizes change. A new multiplier switches live.
+                const auto mode = chooseMode(*next);
+                const auto plan = planFor(*next, mode);
+                const bool rebuild = deviceChanged || !sameMode(mode, p.mode) ||
                     previous.frameGen.performanceMode != next->frameGen.performanceMode ||
-                    previous.capture.audio != next->capture.audio) {
+                    previous.capture.audio != next->capture.audio || !applyPlanLive(plan);
+                if (rebuild) {
                     configure(deviceChanged);
                 } else {
                     // Live values: pacing, latency calibration, colour, SR/HDR tuning, volume.
@@ -146,9 +154,11 @@ void Engine::run() {
                     pipeline_.updateSettings(*next);
                     reflex_.enable(device_.d3d(), next->frameGen.reflex);
                     presenter_.setVsync(next->display.sync == core::SyncMode::VSync);
-                    audio_.setVolume(next->capture.volume);
-                    std::lock_guard lock(mutex_);
-                    monitor_.configure({next->latency.captureHardwareMs, next->latency.displayProcessingMs, display_.refreshHz});
+                    audio_.setVolume(next->capture.muted ? 0.0f : next->capture.volume);
+                    {
+                        std::lock_guard lock(mutex_);
+                        monitor_.configure({next->latency.captureHardwareMs, next->latency.displayProcessingMs, display_.refreshHz});
+                    }
                     publishState();
                 }
             }
@@ -237,17 +247,23 @@ bool Engine::configure(bool reopenDevice) {
 
     display_ = gfx::Swapchain::queryDisplay(device_.factory(), window_, &displayPeak_);
     signal_ = source_.signal();
-    const bool wantP010 = signal_.hdr && s.capture.preferHdr && display_.hdr && s.hdr.mode == core::HdrMode::Auto;
-    const auto mode = capture::Source::choose(source_.modes(), s.capture.width, s.capture.height, s.capture.fps, wantP010);
+    const auto mode = chooseMode(s);
     const bool srcHdr = mode.format == capture::PixelFormat::P010 && signal_.hdr;
+    {
+        std::lock_guard lock(cadenceMutex_);
+        cadence_.configure(s.frameGen.contentRate, mode.fps());
+        compare_.reset();
+        lastContentFps_ = cadence_.contentFps();
+    }
 
     // Build; if a vendor feature cannot be created, drop it and plan again.
     PipelineConfig config;
     config.mode = mode;
     config.settings = s;
+    config.maxMultiplier = caps_.fgMaxMultiplier;
     bool built = false;
     for (int attempt = 0; attempt < 4 && !built; ++attempt) {
-        config.plan = core::planPipeline({mode.width, mode.height, mode.fps(), srcHdr}, display_, caps_, s);
+        config.plan = planFor(s, mode);
         config.signal = signal_;
         config.signal.hdr = srcHdr;
         built = pipeline_.build(device_, ngx_.ready() ? &ngx_ : nullptr, config);
@@ -288,6 +304,7 @@ bool Engine::configure(bool reopenDevice) {
     }
     nextBatch_ = 0;
     resetHistory_ = true;
+    dedup_ = config.plan.multiplier > 1;
 
     Presenter::Callbacks& callbacks = presenterCallbacks_;
     callbacks.presented = [this](core::Micros t, core::Micros arrival, bool generated) {
@@ -318,7 +335,7 @@ bool Engine::configure(bool reopenDevice) {
         const auto& devices = state_.devices;
         auto it = std::find_if(devices.begin(), devices.end(), [&](const capture::Device& d) { return d.link == s.capture.devicePath; });
         audio_.start(audio::Passthrough::matchEndpoint(it != devices.end() ? it->name : L""));
-        audio_.setVolume(s.capture.volume);
+        audio_.setVolume(s.capture.muted ? 0.0f : s.capture.volume);
     }
     publishState();
     return true;
@@ -328,6 +345,20 @@ bool Engine::configure(bool reopenDevice) {
 void Engine::onCaptureFrame(const capture::Frame& frame) {
     if (!capturing_) return;
     const core::Micros t0 = nowMicros();
+    {
+        std::lock_guard lock(mutex_);
+        monitor_.onSignalFrame(frame.arrival);
+    }
+    // Repeated pictures (30 fps game in a 60 Hz signal) never reach the GPU
+    // while frame generation runs: DLSS-G must see two different pictures.
+    core::CadenceDecision decision;
+    {
+        std::lock_guard lock(cadenceMutex_);
+        const bool changed = compare_.changed({frame.data, frame.bytes, frame.pitch, frame.chromaOffset,
+                                               frame.width, frame.height, frame.format == capture::PixelFormat::P010});
+        decision = cadence_.onFrame(frame.arrival, changed);
+    }
+    if (dedup_ && !decision.process) return;
     int slot = -1;
     {
         std::lock_guard lock(ring_.mutex);
@@ -351,6 +382,7 @@ void Engine::onCaptureFrame(const capture::Frame& frame) {
         std::lock_guard lock(ring_.mutex);
         ring_.layout[size_t(slot)] = frame;
         ring_.layout[size_t(slot)].data = nullptr;
+        ring_.historyReset[size_t(slot)] = decision.reset;
         ring_.copyMs[size_t(slot)] = core::toMs(nowMicros() - t0);
         ring_.sequence[size_t(slot)] = ++ring_.next;
         ring_.state[size_t(slot)] = UploadRing::State::Ready;
@@ -364,6 +396,7 @@ void Engine::processFrame() {
     int slot = -1;
     capture::Frame layout;
     double copyMs = 0;
+    bool cadenceReset = false;
     uint64_t droppedNow = 0;
     {
         std::lock_guard lock(ring_.mutex);
@@ -380,6 +413,7 @@ void Engine::processFrame() {
         ring_.fence[size_t(slot)] = UINT64_MAX;
         layout = ring_.layout[size_t(slot)];
         copyMs = ring_.copyMs[size_t(slot)];
+        cadenceReset = ring_.historyReset[size_t(slot)];
         droppedNow = ring_.dropped;
         ring_.dropped = 0;
     }
@@ -414,7 +448,7 @@ void Engine::processFrame() {
     reflex_.mark(reflexFrame_, nv::ReflexMarker::SimulationEnd);
     reflex_.mark(reflexFrame_, nv::ReflexMarker::RenderSubmitStart);
     BatchOut out;
-    const bool ok = pipeline_.process(uint32_t(slot), layout, b, autoColor_.current(), resetHistory_, out);
+    const bool ok = pipeline_.process(uint32_t(slot), layout, b, autoColor_.current(), resetHistory_ || cadenceReset, out);
     reflex_.mark(reflexFrame_, nv::ReflexMarker::RenderSubmitEnd);
     const core::Micros submitted = nowMicros();
     {
@@ -516,6 +550,24 @@ void Engine::pollSignal() {
         return;
     }
     if (pollCount_ % 2) return;
+    // The game changed its frame rate (auto detection): re-plan; usually only
+    // the multiplier's cap moves, which switches without a rebuild.
+    double content = 0;
+    {
+        std::lock_guard lock(cadenceMutex_);
+        content = cadence_.contentFps();
+    }
+    if (pipeline_.built() && std::fabs(content - lastContentFps_) > 0.5) {
+        lastContentFps_ = content;
+        core::Settings s;
+        {
+            std::lock_guard lock(mutex_);
+            s = settings_;
+        }
+        log::info("engine", std::format("content rate {:.0f} fps", content));
+        if (!applyPlanLive(planFor(s, pipeline_.config().mode))) configure(false);
+        return;
+    }
     float peak = 0;
     const auto display = gfx::Swapchain::queryDisplay(device_.factory(), window_, &peak);
     const auto signal = source_.signal();
@@ -524,6 +576,37 @@ void Engine::pollSignal() {
             signal_.hdr, signal.hdr, display_.hdr, display.hdr, display_.refreshHz, display.refreshHz));
         configure(false);
     }
+}
+
+capture::Mode Engine::chooseMode(const core::Settings& s) const {
+    const bool wantP010 = signal_.hdr && s.capture.preferHdr && display_.hdr && s.hdr.mode == core::HdrMode::Auto;
+    return capture::Source::choose(source_.modes(), s.capture.width, s.capture.height, s.capture.fps, wantP010);
+}
+
+core::Plan Engine::planFor(const core::Settings& s, const capture::Mode& mode) {
+    const bool srcHdr = mode.format == capture::PixelFormat::P010 && signal_.hdr;
+    double content = mode.fps();
+    {
+        std::lock_guard lock(cadenceMutex_);
+        content = std::min(cadence_.contentFps(), mode.fps());
+    }
+    // Frame generation multiplies the content rate, not the HDMI rate.
+    return core::planPipeline({mode.width, mode.height, content, srcHdr}, display_, caps_, s);
+}
+
+bool Engine::applyPlanLive(const core::Plan& plan) {
+    if (samePlan(plan, pipeline_.config().plan) && plan.outputFps == pipeline_.config().plan.outputFps) return true;
+    if (!pipeline_.updatePlan(plan)) return false;
+    core::PacerConfig pc = pacer_.config();
+    pc.multiplier = plan.multiplier;
+    pacer_.configure(pc);
+    dedup_ = plan.multiplier > 1;
+    {
+        std::lock_guard lock(mutex_);
+        monitor_.setFrameGeneration(plan.multiplier);
+    }
+    publishState();
+    return true;
 }
 
 // ------------------------------------------------------------------ state

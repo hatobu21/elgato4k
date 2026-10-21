@@ -17,6 +17,7 @@ private:
     void onUiMessage(const std::string& json);
     void change(const core::Settings& next);
     void showUi(bool visible);
+    void flash(const std::string& text);
 
     HWND video_ = nullptr;
     UiOverlay overlay_;

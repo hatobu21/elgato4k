@@ -18,6 +18,8 @@ struct EnumNames { E value; const char* name; };
 constexpr EnumNames<PacingMode> kPacing[] = {{PacingMode::Even, "even"}, {PacingMode::LowLatency, "lowLatency"}};
 constexpr EnumNames<HdrMode> kHdrMode[] = {{HdrMode::Auto, "auto"}, {HdrMode::Off, "off"}};
 constexpr EnumNames<AdaptSpeed> kSpeed[] = {{AdaptSpeed::Slow, "slow"}, {AdaptSpeed::Normal, "normal"}, {AdaptSpeed::Fast, "fast"}};
+constexpr EnumNames<ContentRate> kContent[] = {{ContentRate::Auto, "auto"}, {ContentRate::Fps30, "30"},
+                                                {ContentRate::Fps60, "60"}, {ContentRate::Fps120, "120"}};
 constexpr EnumNames<SyncMode> kSync[] = {{SyncMode::Vrr, "vrr"}, {SyncMode::VSync, "vsync"}, {SyncMode::Tearing, "tearing"}};
 
 template <typename E, size_t N>
@@ -69,6 +71,7 @@ const std::vector<Field>& fields() {
     static const std::vector<Field> f = {
         VELA_FIELD("frameGen.enabled", frameGen.enabled),
         VELA_FIELD("frameGen.multiplier", frameGen.multiplier),
+        VELA_ENUM("frameGen.contentRate", frameGen.contentRate, kContent),
         VELA_ENUM("frameGen.pacing", frameGen.pacing, kPacing),
         VELA_FIELD("frameGen.compression", frameGen.compression),
         VELA_FIELD("frameGen.reflex", frameGen.reflex),
@@ -98,8 +101,11 @@ const std::vector<Field>& fields() {
          [](Settings& s, const json& j) { return j.is_string() && parseModeKey(j.get<std::string>(), s.capture); }},
         VELA_FIELD("capture.audio", capture.audio),
         VELA_FIELD("capture.volume", capture.volume),
+        VELA_FIELD("capture.muted", capture.muted),
         VELA_ENUM("display.sync", display.sync, kSync),
         VELA_FIELD("display.fullscreen", display.fullscreen),
+        {"display.monitor", [](const Settings& s) { return json(narrow(s.display.monitor)); },
+         [](Settings& s, const json& j) { if (!j.is_string()) return false; s.display.monitor = widen(j.get<std::string>()); return true; }},
     };
     return f;
 }
@@ -151,7 +157,7 @@ std::string stateMessage(const engine::EngineState& st) {
         {"outputWidth", st.plan.outputWidth}, {"outputHeight", st.plan.outputHeight},
         {"superRes", srPathKey(st.plan.superRes)}, {"hdr", hdrPathKey(st.plan.hdr)},
         {"multipliers", st.plan.multipliers}, {"multiplier", st.plan.multiplier},
-        {"outputFps", st.plan.outputFps}, {"frameGenBlocked", st.plan.frameGenBlocked},
+        {"contentFps", st.plan.contentFps}, {"outputFps", st.plan.outputFps}, {"frameGenBlocked", st.plan.frameGenBlocked},
         {"vramEstimateMB", st.plan.vramEstimateMB}, {"notes", st.plan.notes}};
     json source = {
         {"signal", st.source.signal}, {"width", st.source.width}, {"height", st.source.height}, {"fps", st.source.fps},
@@ -191,7 +197,8 @@ std::string telemetryMessage(const engine::EngineTelemetry& t) {
     for (const double v : t.intervals) intervals.push_back(std::round(v * 100) / 100);
     const auto& c = t.color;
     json body = {
-        {"sourceFps", l.sourceFps}, {"outputFps", l.outputFps},
+        {"signalFps", l.signalFps}, {"sourceFps", l.sourceFps}, {"outputFps", l.outputFps},
+        {"contentFps", t.contentFps}, {"detectedFps", t.detectedFps}, {"repeats", t.repeats},
         {"pipeline", summary(l.pipeline)}, {"captureCopy", summary(l.captureCopy)}, {"gpuTotal", summary(l.gpuTotal)},
         {"presentInterval", summary(l.presentInterval)}, {"stages", stages}, {"scanoutMs", l.scanoutMs},
         {"endToEndMs", l.endToEndMs}, {"fgAddedMs", l.fgAddedMs}, {"calibrated", l.calibrated},

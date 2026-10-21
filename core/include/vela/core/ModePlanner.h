@@ -47,6 +47,7 @@ struct Plan {
     HdrPath hdr = HdrPath::Sdr;
     std::vector<unsigned> multipliers;  // usable frame generation multipliers
     unsigned multiplier = 1;            // applied (1 = off)
+    double contentFps = 0;              // game frame rate the multiplier applies to
     double outputFps = 0;
     bool frameGenBlocked = false;       // requested but unusable
     double vramEstimateMB = 0;

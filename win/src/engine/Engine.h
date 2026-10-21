@@ -11,6 +11,7 @@
 #include "nv/NgxCore.h"
 #include "nv/Reflex.h"
 #include "vela/core/AutoColor.h"
+#include "vela/core/ContentCadence.h"
 #include "vela/core/FramePacer.h"
 #include "vela/core/LatencyMonitor.h"
 #include "vela/core/ModePlanner.h"
@@ -57,6 +58,8 @@ struct EngineTelemetry {
     core::LatencySnapshot latency;
     std::vector<double> intervals;      // recent present intervals, ms, oldest first
     core::ColorParams color;
+    double contentFps = 0, detectedFps = 0;     // game frame rate inside the signal
+    uint64_t repeats = 0;                       // repeated pictures skipped
 };
 
 class Engine {
@@ -82,6 +85,7 @@ private:
         std::array<uint64_t, Pipeline::kUploadSlots> sequence{};
         std::array<capture::Frame, Pipeline::kUploadSlots> layout{};
         std::array<double, Pipeline::kUploadSlots> copyMs{};
+        std::array<bool, Pipeline::kUploadSlots> historyReset{};
         uint64_t next = 0, dropped = 0;
         std::mutex mutex;
         HANDLE event = nullptr;
@@ -102,6 +106,9 @@ private:
     void collectFinished();
     void pollSignal();
     void publishState();
+    capture::Mode chooseMode(const core::Settings& s) const;
+    core::Plan planFor(const core::Settings& s, const capture::Mode& mode);
+    bool applyPlanLive(const core::Plan& plan);
     void refreshCaps();
     std::vector<SystemCheck> systemChecks() const;
 
@@ -137,6 +144,13 @@ private:
     uint64_t pollCount_ = 0;
     Presenter::Callbacks presenterCallbacks_;
     std::atomic<bool> capturing_{false};
+    std::atomic<bool> dedup_{false};
+    double lastContentFps_ = 0;
+
+    // Capture thread + engine thread: repeat detection and content rate.
+    mutable std::mutex cadenceMutex_;
+    core::ContentCadence cadence_;
+    core::PictureCompare compare_;
 
     // Shared with other threads.
     mutable std::mutex mutex_;

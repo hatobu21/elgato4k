@@ -8,6 +8,9 @@ void Settings::clamp() {
     frameGen.multiplier = std::clamp(frameGen.multiplier, 2u, 6u);
     if (frameGen.pacing != PacingMode::Even && frameGen.pacing != PacingMode::LowLatency) frameGen.pacing = PacingMode::Even;
     frameGen.compression = std::clamp(frameGen.compression, 0.0f, 0.75f);
+    if (frameGen.contentRate != ContentRate::Auto && frameGen.contentRate != ContentRate::Fps30 &&
+        frameGen.contentRate != ContentRate::Fps60 && frameGen.contentRate != ContentRate::Fps120)
+        frameGen.contentRate = ContentRate::Auto;
 
     latency.hudCorner = std::min(latency.hudCorner, 3u);
     latency.captureHardwareMs = std::clamp(latency.captureHardwareMs, 0.0f, 100.0f);
