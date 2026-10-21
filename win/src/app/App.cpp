@@ -90,9 +90,18 @@ void App::setFullscreen(bool on) {
     settings_.display.fullscreen = on;
     SetTimer(video_, kSaveTimer, 1000, nullptr);
     overlay_.follow();
+    postMode();
+    if (!on) showUi(true);
+}
+
+void App::postMode() {
+    overlay_.post(std::string(R"({"type":"mode","fullscreen":)") + (fullscreen_ ? "true" : "false") + "}");
 }
 
 void App::showUi(bool visible) {
+    // Windowed, the interface is the layout (picture pane + scope column): it
+    // never hides. Fullscreen, it gets out of the way of the picture.
+    if (!visible && !fullscreen_) return;
     KillTimer(video_, kHideTimer);
     if (visible) {
         overlay_.show(true);
@@ -125,6 +134,7 @@ void App::onUiMessage(const std::string& text) {
     if (msg.is_discarded() || !msg.contains("type")) return;
     const auto type = msg["type"].get<std::string>();
     if (type == "hello") {
+        postMode();
         overlay_.post(stateMessage(engine_.state()));
     } else if (type == "set" && msg.contains("path") && msg.contains("value")) {
         auto next = settings_;
@@ -134,6 +144,9 @@ void App::onUiMessage(const std::string& text) {
         if (name == "toggleFullscreen") setFullscreen(!fullscreen_);
         else if (name == "resetStats") engine_.resetStats();
         else if (name == "hideUi") showUi(false);
+    } else if (type == "viewport" && msg.contains("w") && msg.contains("h")) {
+        const RECT r{msg.value("x", 0), msg.value("y", 0), msg.value("x", 0) + msg.value("w", 0), msg.value("y", 0) + msg.value("h", 0)};
+        engine_.setViewport(r);
     } else if (type == "ui" && msg.contains("visible")) {
         if (!msg["visible"].get<bool>()) showUi(false);
     }
@@ -185,7 +198,7 @@ LRESULT App::handle(UINT msg, WPARAM wp, LPARAM lp) {
     case WM_KEYDOWN: {
         auto next = settings_;
         switch (wp) {
-        case VK_HOME: showUi(!overlay_.visible()); return 0;
+        case VK_HOME: if (fullscreen_) showUi(!overlay_.visible()); return 0;
         case 'F':
             next.frameGen.enabled = !next.frameGen.enabled;
             change(next);

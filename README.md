@@ -10,7 +10,9 @@
 4. **HDR**：HDR10 直通、SDR → RTX Video HDR、HDR → SDR 色调映射，跟随主机自动切换
 5. **自动调色**：色阶、白平衡、鲜艳度，缓慢平滑，保留有意为之的色调
 
-![界面](docs/images/ui-home.png)
+| 窗口模式（监视器布局） | 全屏模式（侧轨布局） |
+|---|---|
+| ![窗口](docs/images/ui-windowed.png) | ![全屏](docs/images/ui-fullscreen.png) |
 
 ## 现状
 

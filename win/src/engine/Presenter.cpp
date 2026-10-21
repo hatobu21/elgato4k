@@ -4,6 +4,7 @@
 
 #include <avrt.h>
 
+#include <algorithm>
 #include <cmath>
 #include <format>
 
@@ -100,6 +101,11 @@ void Presenter::discard() {
         if (i.lastOfBatch && callbacks_.released) callbacks_.released(i.batchSlot, device_ ? device_->completed() : 0);
 }
 
+void Presenter::setViewport(const RECT& rect) {
+    std::lock_guard lock(mutex_);
+    viewport_ = rect;
+}
+
 void Presenter::setHud(const HudText& hud) {
     std::lock_guard lock(mutex_);
     hud_ = hud;
@@ -153,25 +159,35 @@ bool Presenter::presentOne(const PresentItem& item) {
     list->Reset(allocators_[a].Get(), nullptr);
 
     HudText hud;
+    RECT view{};
     {
         std::lock_guard lock(mutex_);
         hud = hud_;
+        view = viewport_;
     }
     auto& bb = sc.buffer(sc.current());
     auto& frame = *item.texture;
-    const bool direct = !hud.on && frame.width == bb.width && frame.height == bb.height && frame.format == bb.format;
+    // Clamp the pane to the back buffer; an empty or stale rectangle means the whole window.
+    view.left = std::clamp<LONG>(view.left, 0, LONG(bb.width));
+    view.top = std::clamp<LONG>(view.top, 0, LONG(bb.height));
+    view.right = std::clamp<LONG>(view.right, view.left, LONG(bb.width));
+    view.bottom = std::clamp<LONG>(view.bottom, view.top, LONG(bb.height));
+    if (view.right - view.left < 16 || view.bottom - view.top < 16) view = {0, 0, LONG(bb.width), LONG(bb.height)};
+    const uint32_t viewW = uint32_t(view.right - view.left), viewH = uint32_t(view.bottom - view.top);
+    const bool whole = view.left == 0 && view.top == 0 && viewW == bb.width && viewH == bb.height;
+    const bool direct = !hud.on && whole && frame.width == bb.width && frame.height == bb.height && frame.format == bb.format;
     if (direct) {
         gfx::transition(list, bb, D3D12_RESOURCE_STATE_COPY_DEST);
         list->CopyResource(bb.get(), frame.get());
     } else {
-        // Letterbox the frame into the window, keep its aspect.
-        const double scale = std::min(double(bb.width) / frame.width, double(bb.height) / frame.height);
+        // Letterbox the frame into the picture pane, keep its aspect.
+        const double scale = std::min(double(viewW) / frame.width, double(viewH) / frame.height);
         const uint32_t w = uint32_t(frame.width * scale), h = uint32_t(frame.height * scale);
         ComposeConstants c{};
         c.dstW = bb.width;
         c.dstH = bb.height;
-        c.rectX = int32_t(bb.width - w) / 2;
-        c.rectY = int32_t(bb.height - h) / 2;
+        c.rectX = int32_t(view.left) + int32_t(viewW - w) / 2;
+        c.rectY = int32_t(view.top) + int32_t(viewH - h) / 2;
         c.rectW = w;
         c.rectH = h;
         c.hudOn = hud.on ? 1 : 0;
@@ -179,8 +195,8 @@ bool Presenter::presentOne(const PresentItem& item) {
         c.hudChars = hud.count;
         const int32_t boxW = int32_t(hud.count * c.hudScale * 4 + c.hudScale * 3), boxH = int32_t(c.hudScale * 9);
         const int32_t margin = int32_t(c.hudScale * 8);
-        c.hudX = (hud.corner % 2 == 0) ? margin : int32_t(bb.width) - boxW - margin;
-        c.hudY = (hud.corner < 2) ? margin : int32_t(bb.height) - boxH - margin;
+        c.hudX = (hud.corner % 2 == 0) ? c.rectX + margin : c.rectX + int32_t(w) - boxW - margin;
+        c.hudY = (hud.corner < 2) ? c.rectY + margin : c.rectY + int32_t(h) - boxH - margin;
         c.hudWhite = sc.hdr() ? 0.58f : 1.0f;   // PQ code of ~203 nits
         for (unsigned i = 0; i < 16; ++i) c.text[i / 4] |= uint32_t(hud.glyphs[i]) << ((i % 4) * 8);
         gfx::transition(list, composite_, D3D12_RESOURCE_STATE_UNORDERED_ACCESS);

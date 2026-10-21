@@ -70,6 +70,7 @@ public:
 
     void apply(const core::Settings& settings);    // any thread
     void resize(uint32_t width, uint32_t height);   // any thread
+    void setViewport(const RECT& rect);             // any thread; picture pane in the window
     void resetStats();
 
     EngineState state() const;

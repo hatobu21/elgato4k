@@ -77,6 +77,10 @@
     for (const b of $$('[data-toggle]')) b.setAttribute('aria-pressed', String(!!getPath(s, b.dataset.toggle)));
   }
 
+  const app = $('#app');
+  const isFull = () => app.dataset.mode === 'fullscreen';
+  const railHdr = { passthrough: 'HDR', rtxHdr: 'RTX', toneMap: 'SDR', sdr: 'SDR' };
+
   function renderState() {
     if (!view.settings) return;
     const { settings: s, plan: p, source: src, caps } = view;
@@ -86,34 +90,42 @@
     const allowed = new Set(p?.multipliers ?? []);
     for (const b of $$('#fg-multiplier button')) b.disabled = !allowed.has(Number(b.dataset.value));
     const maxCap = caps?.fgMaxMultiplier ?? 0;
+    const fgOn = s.frameGen.enabled && p && p.multiplier > 1;
+    $('#fg-formula').textContent = fgOn ? `${fps(p.contentFps)} × ${p.multiplier} = ${fps(p.outputFps)} fps` : '';
     $('#fg-multiplier-hint').textContent = allowed.size
-      ? `按内容帧率计算：${fps(p?.contentFps)} fps × ${p?.multiplier ?? '—'} = ${fps(p?.outputFps)} fps。可用 ${[...allowed].map((m) => `${m}×`).join(' / ')}，受显示器 ${view.display?.refreshHz ?? '—'} Hz 与驱动上限 ${maxCap}× 限制。`
-      : '当前不可用，原因见下方提示。';
+      ? `按内容帧率计算。可用 ${[...allowed].map((m) => `${m}×`).join(' / ')}，受显示器 ${view.display?.refreshHz ?? '—'} Hz 与驱动上限 ${maxCap}× 限制。`
+      : '当前不可用，原因见提示。';
     $('#fg-compression-field').hidden = s.frameGen.pacing !== 'lowLatency';
 
-    // dock
-    const fgOn = s.frameGen.enabled && p && p.multiplier > 1;
-    $('.dock-fg').classList.toggle('is-off', !fgOn);
-    $('#dock-fg').textContent = fgOn ? `${p.multiplier}×` : '关';
-    $('#dock-sr').textContent = !s.superRes.enabled ? '关' : p?.superRes !== 'none' ? srName[p.superRes] : '未启用';
-    $('#dock-hdr').textContent = s.hdr.mode === 'off' && !src?.hdr ? 'SDR' : hdrName[p?.hdr ?? 'sdr'];
-    $('#dock-color').textContent = s.color.enabled ? `自动 ${Math.round(s.color.strength * 100)}%` : '关';
+    // signal strip (windowed)
+    const live = !!(src && src.signal);
+    $('#tally').classList.toggle('live', live);
+    $('#tally-text').textContent = live ? 'LIVE' : '无信号';
+    $('#sig-device').textContent = view.devices.find((d) => d.path === s.capture.device)?.name ?? '未选择设备';
+    $('#sig-in').textContent = live
+      ? `${res(src.width, src.height)}p${fps(src.fps)} · ${src.hdr ? 'HDR10 PQ · BT.2020' : 'SDR · BT.709'}` : '—';
+    const slower = live && p?.contentFps && p.contentFps < src.fps - 0.5;
+    $('#sig-content').hidden = !slower;
+    $('#sig-content').textContent = slower ? `内容 ${fps(p.contentFps)} fps` : '';
+    $('#sig-out').textContent = live && p
+      ? `输出 ${res(p.outputWidth, p.outputHeight)} · ${fps(p.outputFps)} fps${s.display.sync === 'vrr' ? ' · VRR' : ''}` : '—';
+    $('#sig-gpu').textContent = caps?.gpu ?? '';
+    $('#nosignal').hidden = live;
 
-    // signal chain
-    const live = src && src.signal;
-    $('#signal-dot').classList.toggle('live', !!live);
-    $('#chain-device').textContent = view.devices.find((d) => d.path === s.capture.device)?.name ?? '未选择设备';
-    const content = p?.contentFps && src && p.contentFps < src.fps - 0.5 ? ` · 内容 ${fps(p.contentFps)} fps` : '';
-    $('#chain-in').textContent = live
-      ? `${res(src.width, src.height)} · ${fps(src.fps)} Hz · ${src.hdr ? 'HDR10' : 'SDR'}${content}`
-      : '无信号';
-    $('#nosignal').hidden = !!live;
-    $('#chain-out').textContent = live && p ? `${res(p.outputWidth, p.outputHeight)} · ${fps(p.outputFps)} fps` : '—';
+    // rail (fullscreen)
+    $('#rail-fg').textContent = fgOn ? `${p.multiplier}×` : '关';
+    $('#rail-sr').textContent = !s.superRes.enabled ? '关' : p?.superRes === 'videoSr' ? 'VSR' : p?.superRes === 'dlss' ? 'DLSS' : '原生';
+    $('#rail-hdr').textContent = railHdr[p?.hdr ?? 'sdr'];
+    $('#rail-color').textContent = s.color.enabled ? `${Math.round(s.color.strength * 100)}%` : '关';
+    $('[data-open="frameGen"].rail-item').classList.toggle('is-off', !fgOn);
+    $('[data-open="superRes"].rail-item').classList.toggle('is-off', !s.superRes.enabled || p?.superRes === 'none');
+    $('[data-open="color"].rail-item').classList.toggle('is-off', !s.color.enabled);
+    $('#pill').hidden = !(isFull() && s.latency.hud);
 
     // frame generation summary + facts
     $('#fg-summary').innerHTML = !s.frameGen.enabled ? '帧生成已关闭，画面按源帧率输出。'
       : p?.frameGenBlocked ? '帧生成暂不可用。'
-      : `内容 <strong>${fps(p?.contentFps)} fps</strong> → 输出 <strong>${fps(p?.outputFps)} fps</strong>，每两帧不同的画面之间插入 ${p.multiplier - 1} 帧。`;
+      : `内容 <strong>${fps(p?.contentFps)} fps</strong> → 输出 <strong>${fps(p?.outputFps)} fps</strong>，每两张不同的画面之间生成 ${p.multiplier - 1} 帧。`;
     renderFgFacts();
 
     // super resolution
@@ -143,11 +155,6 @@
     $('#dev-checks').innerHTML = view.system.map((c) =>
       `<li><span class="state ${c.state}"></span><span>${esc(c.name)}</span><span class="detail">${esc(c.detail ?? '')}</span></li>`).join('');
 
-    // HUD placement
-    const hud = $('#hud');
-    hud.hidden = !s.latency.hud;
-    hud.dataset.corner = String(s.latency.hudCorner);
-
     // plan notes -> toast once per change
     const notes = (p?.notes ?? []).join('；');
     if (notes && notes !== view.notes) toast(notes);
@@ -160,7 +167,7 @@
       ['DLSS-G 运行库', caps?.dlssgVersion ?? '—'],
       ['驱动上限', caps?.fgMaxMultiplier ? `${caps.fgMaxMultiplier}×` : '不可用'],
       ['光流', caps?.opticalFlow ? 'NVOF 硬件光流' : '不可用'],
-      ['额外延迟', tm && tm.fgAddedMs > 0 ? `≈ ${ms(tm.fgAddedMs)} ms` : '—'],
+      ['补帧额外延迟', tm && tm.fgAddedMs > 0 ? `≈ ${ms(tm.fgAddedMs)} ms` : '—'],
       ['跳过的重复画面', tm ? String(tm.repeats ?? 0) : '—'],
     ]);
   }
@@ -183,67 +190,69 @@
     ['superRes', '超分'], ['hdr', 'HDR'], ['frameGen', '帧生成'], ['output', '输出'],
   ];
 
+  // Where the end-to-end estimate goes, in order.
+  function latencyParts() {
+    const s = view.settings;
+    const copy = tm.captureCopy.p50, gpu = tm.gpuTotal.p50;
+    return [
+      ['采集卡', tm.calibrated ? s.latency.captureHardwareMs : 0, 'var(--seg-capture)', tm.calibrated ? null : '未校准'],
+      ['采集拷贝', copy, 'var(--seg-capture)'],
+      ['GPU 处理', gpu, 'var(--seg-gpu)'],
+      [tm.fgAddedMs > 0 ? '补帧节奏等待' : '提交与等待', Math.max(0, tm.pipeline.p50 - copy - gpu), 'var(--seg-wait)'],
+      ['显示扫描', tm.scanoutMs + (s.latency.displayProcessingMs || 0), 'var(--seg-display)'],
+    ];
+  }
+  function bar(sel, parts) {
+    $(sel).innerHTML = parts.filter((x) => x[1] > 0)
+      .map(([n, v, c]) => `<span title="${n} ${v.toFixed(1)} ms" style="flex-grow:${v};background:${c}"></span>`).join('');
+  }
+
   function renderTelemetry() {
     if (!tm || !view.settings) return;
-    const s = view.settings;
     const cls = latencyClass(tm.endToEndMs);
     const e2e = ms(tm.endToEndMs);
-    const caption = tm.calibrated ? '端到端估算（含采集卡与显示器）' : '端到端估算（采集卡延迟未校准）';
+    const parts = latencyParts();
 
-    // dock + HUD
-    const dl = $('#dock-latency');
-    dl.textContent = `${e2e} ms`;
-    dl.className = `dock-value dock-num ${cls}`;
-    if (!$('#hud').hidden) {
-      const hv = $('#hud-e2e');
-      hv.textContent = e2e;
-      hv.className = `hud-value ${cls}`;
-      $('#hud-label').textContent = tm.calibrated ? '端到端估算' : '端到端估算 · 未校准';
-      $('#hud-fps').textContent = fps(tm.outputFps);
-      $('#hud-src').textContent = fps(tm.contentFps || tm.sourceFps);
-      $('#hud-p95').textContent = `${ms(tm.pipeline.p95)}`;
-      $('#hud-gpu').textContent = `${ms(tm.gpuTotal.p50, 2)}`;
-      spark($('#hud-spark'), tm.intervals.slice(-120), tm.outputFps, false);
+    const rl = $('#rail-latency');
+    rl.textContent = tm.endToEndMs > 0 ? String(Math.round(tm.endToEndMs)) : '—';
+    rl.className = `rail-num ${cls}`;
+    if (!$('#pill').hidden) {
+      $('#pill-e2e').textContent = `${e2e} ms`;
+      $('#pill-e2e').className = cls;
+      $('#pill-fps').textContent = `${fps(tm.outputFps)} / ${fps(tm.contentFps || tm.sourceFps)} fps`;
+    }
+
+    if (!isFull()) {
+      $('#scope-e2e').textContent = e2e;
+      $('#scope-e2e').className = cls;
+      $('#scope-label').textContent = tm.calibrated ? '端到端 · 已校准' : '端到端 · 采集卡未校准';
+      bar('#scope-bar', parts);
+      $('#scope-rows').innerHTML = parts.filter((x) => x[3] === undefined || x[1] > 0)
+        .map(([n, v]) => `<dt>${n}</dt><dd>${ms(v)}</dd>`).join('');
+      spark($('#strip-chart'), tm.intervals, tm.outputFps);
+      $('#strip-stats').textContent =
+        `目标 ${ms(1000 / Math.max(tm.outputFps, 1), 2)} ms · P99 ${ms(tm.presentInterval.p99, 2)} ms · 跳过生成帧 ${tm.droppedGenerated}`;
     }
 
     if (view.tab === 'latency') {
-      $('#lat-e2e').textContent = e2e;
-      $('#lat-e2e').className = `big-num ${cls}`;
-      $('#lat-caption').textContent = caption;
-      const card = tm.calibrated ? s.latency.captureHardwareMs : 0;
-      const copy = tm.captureCopy.p50;
-      const gpu = tm.gpuTotal.p50;
-      const wait = Math.max(0, tm.pipeline.p50 - copy - gpu);
-      const disp = tm.scanoutMs + (s.latency.displayProcessingMs || 0);
-      const parts = [
-        ['采集卡', card, 'var(--seg-capture)', tm.calibrated ? null : '未校准'],
-        ['CPU 拷贝', copy, 'var(--seg-capture)'],
-        ['GPU 处理', gpu, 'var(--seg-gpu)'],
-        [tm.fgAddedMs > 0 ? '补帧节奏等待' : '提交与等待', wait, 'var(--seg-wait)'],
-        ['显示扫描', disp, 'var(--seg-display)'],
-      ];
-      $('#lat-breakdown').innerHTML = parts.filter((x) => x[1] > 0)
-        .map(([n, v, c]) => `<span title="${n} ${v.toFixed(1)} ms" style="flex-grow:${v};background:${c}"></span>`).join('');
-      $('#lat-legend').innerHTML = parts.map(([n, v, c, alt]) =>
-        `<li><i style="background:${c}"></i>${n}<b>${alt ?? `${ms(v)} ms`}</b></li>`).join('');
-
-      const seg = tm.intervals;
-      spark($('#lat-spark'), seg, tm.outputFps, true);
-      $('#lat-spark-min').textContent = `目标 ${ms(1000 / Math.max(tm.outputFps, 1), 2)} ms`;
-      $('#lat-spark-max').textContent = `P99 ${ms(tm.presentInterval.p99, 2)} ms`;
-
+      if (isFull()) {
+        $('#lat-e2e').textContent = e2e;
+        $('#lat-e2e').className = `big-num ${cls}`;
+        $('#lat-caption').textContent = tm.calibrated ? '端到端估算（含采集卡与显示器）' : '端到端估算（采集卡延迟未校准）';
+        bar('#lat-bar', parts);
+        $('#lat-legend').innerHTML = parts.map(([n, v, c, alt]) =>
+          `<li><i style="background:${c}"></i>${n}<b>${alt ?? ms(v)}</b></li>`).join('');
+      }
       $('#lat-stages').innerHTML = stageRows.map(([k, label]) => {
         const st = k === 'captureCopy' ? tm.captureCopy : tm.stages[k];
         const on = st && st.p50 >= 0;
         return `<tr class="${on ? '' : 'off'}"><td>${label}</td><td>${on ? ms(st.p50, 2) : '—'}</td><td>${on ? ms(st.p95, 2) : '—'}</td></tr>`;
       }).join('') + `<tr><td>GPU 合计</td><td>${ms(tm.gpuTotal.p50, 2)}</td><td>${ms(tm.gpuTotal.p95, 2)}</td></tr>`;
-
       facts('#lat-counters', [
-        ['管线（回调 → 上屏）', `P50 ${ms(tm.pipeline.p50)} · P95 ${ms(tm.pipeline.p95)} ms`],
-        ['补帧额外延迟', tm.fgAddedMs > 0 ? `≈ ${ms(tm.fgAddedMs)} ms` : '—'],
+        ['管线（回调 → 上屏）', `${ms(tm.pipeline.p50)} / ${ms(tm.pipeline.p95)} ms`],
+        ['信号 / 内容 / 输出', `${fps(tm.signalFps)} / ${fps(tm.contentFps || tm.sourceFps)} / ${fps(tm.outputFps)}`],
         ['采集丢帧', String(tm.droppedSource)],
         ['跳过的生成帧', String(tm.droppedGenerated)],
-        ['已呈现', `${tm.presented}（生成 ${tm.presentedGenerated}）`],
       ]);
     }
     if (view.tab === 'frameGen') {
@@ -273,75 +282,111 @@
     }).join('');
   }
 
-  function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim(); }
-  function spark(canvas, values, outFps, detailed) {
+  function token(name) { return getComputedStyle(app).getPropertyValue(name).trim(); }
+  function spark(canvas, values, outFps) {
     const dpr = window.devicePixelRatio || 1;
     const w = canvas.clientWidth, h = canvas.clientHeight;
     if (!w || !h) return;
-    if (canvas.width !== Math.round(w * dpr)) { canvas.width = Math.round(w * dpr); canvas.height = Math.round(h * dpr); }
+    if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
+      canvas.width = Math.round(w * dpr);
+      canvas.height = Math.round(h * dpr);
+    }
     const g = canvas.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
     if (!values.length) return;
     const ideal = 1000 / Math.max(outFps, 1);
     const top = Math.max(ideal * 2.2, ...values) * 1.08;
-    const y = (v) => h - 4 - (v / top) * (h - 8);
-    // ideal interval guide
-    g.strokeStyle = cssVar('--line-strong');
-    g.setLineDash([3, 4]);
+    const y = (v) => h - 3 - (v / top) * (h - 6);
+    g.strokeStyle = token('--line-2');
+    g.setLineDash([4, 5]);
     g.beginPath(); g.moveTo(0, y(ideal)); g.lineTo(w, y(ideal)); g.stroke();
     g.setLineDash([]);
     const step = w / Math.max(values.length - 1, 1);
-    g.beginPath();
-    values.forEach((v, i) => (i ? g.lineTo(i * step, y(v)) : g.moveTo(0, y(v))));
-    if (detailed) {
-      g.lineTo(w, h); g.lineTo(0, h); g.closePath();
-      g.fillStyle = 'rgba(158, 214, 255, 0.08)';
-      g.fill();
-      g.beginPath();
-      values.forEach((v, i) => (i ? g.lineTo(i * step, y(v)) : g.moveTo(0, y(v))));
-    }
-    g.strokeStyle = cssVar('--ice');
-    g.lineWidth = 1.25;
+    const path = () => { g.beginPath(); values.forEach((v, i) => (i ? g.lineTo(i * step, y(v)) : g.moveTo(0, y(v)))); };
+    path();
+    g.lineTo(w, h); g.lineTo(0, h); g.closePath();
+    g.fillStyle = 'rgba(158, 214, 255, 0.07)';
+    g.fill();
+    path();
+    g.strokeStyle = token('--data');
+    g.lineWidth = 1.4;
     g.stroke();
-    const last = values[values.length - 1];
-    g.fillStyle = cssVar('--ice');
-    g.beginPath(); g.arc(w - 1.5, y(last), 2.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = token('--data');
+    g.beginPath(); g.arc(w - 2, y(values[values.length - 1]), 2.4, 0, Math.PI * 2); g.fill();
   }
 
-  // ------------------------------------------------------------- drawer & UI
-  function openTab(tab) {
-    const drawer = $('#drawer');
-    if (view.tab === tab && !drawer.hidden) return closeDrawer();
+  // ------------------------------------------------------- panels and modes
+  function selectPanel(tab) {
     view.tab = tab;
-    drawer.hidden = false;
-    $('#app').classList.add('drawer-open');
     for (const b of $$('#tabs button')) b.setAttribute('aria-selected', String(b.dataset.tab === tab));
     for (const p of $$('.panel')) p.hidden = p.dataset.panel !== tab;
-    for (const d of $$('.dock-item')) d.classList.toggle('is-open', d.dataset.feature === tab);
+    const panel = $(`.panel[data-panel="${tab}"]`);
+    $('#panel-title').textContent = panel ? panel.dataset.title : '';
+    for (const r of $$('.rail-item')) r.classList.toggle('is-open', isFull() && app.dataset.open === r.dataset.open);
     renderState();
     renderTelemetry();
+  }
+  function openPanel(tab) {
+    if (isFull()) {
+      if (app.dataset.open === tab) return closePanel();
+      app.dataset.open = tab;
+    } else if (app.dataset.side === 'collapsed') {
+      setSide(true);
+    }
+    selectPanel(tab);
     showUi();
   }
-  function closeDrawer() {
-    $('#drawer').hidden = true;
-    $('#app').classList.remove('drawer-open');
-    view.tab = null;
-    for (const d of $$('.dock-item')) d.classList.remove('is-open');
+  function closePanel() {
+    delete app.dataset.open;
+    for (const r of $$('.rail-item')) r.classList.remove('is-open');
+    showUi();
   }
 
+  // Windowed: the scope column can be folded away for a bigger picture.
+  function setSide(open) {
+    app.dataset.side = open ? 'open' : 'collapsed';
+    $('#side-toggle').setAttribute('aria-label', open ? '收起面板' : '展开面板');
+    try { localStorage.setItem('vela.side', app.dataset.side); } catch { /* storage may be unavailable */ }
+    reportViewport();
+  }
+
+  function setMode(full) {
+    app.dataset.mode = full ? 'fullscreen' : 'windowed';
+    delete app.dataset.open;
+    if (!full) app.dataset.ui = 'shown';
+    selectPanel(view.tab ?? 'frameGen');
+    showUi();
+    reportViewport();
+  }
+
+  // The host letterboxes the video into this rectangle (device pixels).
+  let lastViewport = '';
+  function reportViewport() {
+    const r = $('#viewport').getBoundingClientRect();
+    const d = window.devicePixelRatio || 1;
+    const msg = { type: 'viewport', x: Math.round(r.left * d), y: Math.round(r.top * d), w: Math.round(r.width * d), h: Math.round(r.height * d) };
+    const key = `${msg.x},${msg.y},${msg.w},${msg.h}`;
+    if (key === lastViewport || !msg.w || !msg.h) return;
+    lastViewport = key;
+    bridge.send(msg);
+  }
+
+  // Fullscreen only: the rail fades after 4 s without input; the host then
+  // hides the whole overlay so the video gets independent flip.
   let hideTimer = 0;
   function showUi() {
-    const app = $('#app');
     if (app.dataset.ui !== 'shown') { app.dataset.ui = 'shown'; bridge.send({ type: 'ui', visible: true }); }
     clearTimeout(hideTimer);
+    if (!isFull()) return;
     hideTimer = setTimeout(() => {
-      if ($('#drawer').hidden && !$('#dock').matches(':hover') && view.source?.signal !== false) hideUi();
+      if (!app.dataset.open && !$('#rail').matches(':hover') && view.source?.signal !== false) hideUi();
     }, 4000);
   }
   function hideUi() {
     clearTimeout(hideTimer);
-    $('#app').dataset.ui = 'hidden';
+    if (!isFull()) return;
+    app.dataset.ui = 'hidden';
     bridge.send({ type: 'ui', visible: false });
   }
 
@@ -354,20 +399,24 @@
     toastTimer = setTimeout(() => (t.hidden = true), 4200);
   }
 
-  function stepMultiplier(dir) {
-    const list = view.plan?.multipliers ?? [];
-    if (!list.length) return;
-    const cur = view.settings.frameGen.multiplier;
-    const next = dir > 0 ? list.find((m) => m > cur) : [...list].reverse().find((m) => m < cur);
-    if (next) set('frameGen.multiplier', next);
-    if (!view.settings.frameGen.enabled) set('frameGen.enabled', true);
-  }
-
   function parseValue(el, raw) {
     const t = el.dataset.type;
     if (t === 'int') return parseInt(raw, 10);
     if (t === 'float') return parseFloat(raw);
     return raw;
+  }
+
+  function toggleFullscreen() {
+    if (bridge.demo) {
+      // The browser demo switches layout itself; real fullscreen is optional.
+      const full = !isFull();
+      try {
+        if (full) document.documentElement.requestFullscreen?.()?.catch?.(() => {});
+        else if (document.fullscreenElement) document.exitFullscreen()?.catch?.(() => {});
+      } catch { /* not allowed in this frame */ }
+      setMode(full);
+    }
+    bridge.send({ type: 'command', name: 'toggleFullscreen' });
   }
 
   function wire() {
@@ -380,21 +429,17 @@
       const tog = e.target.closest('[data-toggle]');
       if (tog) return set(tog.dataset.toggle, !getPath(view.settings, tog.dataset.toggle));
       const open = e.target.closest('[data-open]');
-      if (open) return openTab(open.dataset.open);
+      if (open) return openPanel(open.dataset.open);
       const tab = e.target.closest('[data-tab]');
-      if (tab) return openTab(tab.dataset.tab);
-      const stepBtn = e.target.closest('[data-step]');
-      if (stepBtn) return stepMultiplier(Number(stepBtn.dataset.step));
+      if (tab) return selectPanel(tab.dataset.tab);
       const cmd = e.target.closest('[data-command]');
       if (cmd) {
-        if (cmd.dataset.command === 'hideUi') return hideUi();
-        if (cmd.dataset.command === 'toggleFullscreen' && bridge.demo) {
-          (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen?.())?.catch?.(() => {});
-        }
+        if (cmd.dataset.command === 'toggleFullscreen') return toggleFullscreen();
         bridge.send({ type: 'command', name: cmd.dataset.command });
       }
     });
-    $('#drawer-close').addEventListener('click', closeDrawer);
+    $('#panel-close').addEventListener('click', closePanel);
+    $('#side-toggle').addEventListener('click', () => setSide(app.dataset.side === 'collapsed'));
     for (const el of $$('input[data-path], select[data-path]')) {
       const ev = el.type === 'range' ? 'input' : 'change';
       el.addEventListener(ev, () => {
@@ -404,11 +449,21 @@
       });
     }
     document.addEventListener('mousemove', showUi, { passive: true });
+    window.addEventListener('resize', reportViewport);
+    if (window.ResizeObserver) new ResizeObserver(reportViewport).observe($('#viewport'));
     document.addEventListener('keydown', (e) => {
       if (e.target.matches('input[type="number"], select')) return;
-      if (e.key === 'Home') { e.preventDefault(); return $('#app').dataset.ui === 'shown' ? hideUi() : showUi(); }
-      if (e.key === 'Escape') return closeDrawer();
-      if (e.key === 'Enter' && e.altKey) return bridge.send({ type: 'command', name: 'toggleFullscreen' });
+      if (e.key === 'Home') {
+        e.preventDefault();
+        if (!isFull()) return setSide(app.dataset.side === 'collapsed');
+        return app.dataset.ui === 'shown' ? hideUi() : showUi();
+      }
+      if (e.key === 'Escape') {
+        if (isFull() && app.dataset.open) return closePanel();
+        if (isFull()) return toggleFullscreen();
+        return;
+      }
+      if (e.key === 'Enter' && e.altKey) return toggleFullscreen();
       if (e.key === 'f' || e.key === 'F') return set('frameGen.enabled', !view.settings.frameGen.enabled);
       if (e.key === 'l' || e.key === 'L') return set('latency.hud', !view.settings.latency.hud);
       if (e.key === 'm' || e.key === 'M') return set('capture.muted', !view.settings.capture.muted);
@@ -427,23 +482,28 @@
     } else if (msg.type === 'telemetry') {
       tm = msg.t;
       renderTelemetry();
+    } else if (msg.type === 'mode') {
+      if (msg.fullscreen !== isFull()) setMode(!!msg.fullscreen);
     } else if (msg.type === 'toast') {
       toast(msg.text);
     } else if (msg.type === 'flash') {
       // Hotkey feedback while playing: notice only, then out of the way.
       clearTimeout(hideTimer);
-      $('#app').dataset.ui = 'flash';
+      app.dataset.ui = 'flash';
       toast(msg.text);
-      hideTimer = setTimeout(() => { if ($('#app').dataset.ui === 'flash') hideUi(); }, 1500);
+      hideTimer = setTimeout(() => { if (app.dataset.ui === 'flash') hideUi(); }, 1500);
     } else if (msg.type === 'ui') {
       msg.visible ? showUi() : hideUi();
     }
   });
 
   wire();
+  try { if (localStorage.getItem('vela.side') === 'collapsed') app.dataset.side = 'collapsed'; } catch { /* no storage */ }
   if (bridge.demo) { $('#demo-flag').hidden = false; startDemoPicture(); }
+  selectPanel('frameGen');
   bridge.send({ type: 'hello' });
   showUi();
+  reportViewport();
 
   // ===================================================================
   // Mock engine (browser only). Mirrors the core's planner and pacing

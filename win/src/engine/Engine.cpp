@@ -70,6 +70,10 @@ void Engine::resize(uint32_t width, uint32_t height) {
     SetEvent(ring_.event);
 }
 
+void Engine::setViewport(const RECT& rect) {
+    presenter_.setViewport(rect);   // kept by the presenter across restarts
+}
+
 void Engine::resetStats() {
     std::lock_guard lock(mutex_);
     pendingReset_ = true;

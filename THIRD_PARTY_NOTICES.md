@@ -20,6 +20,12 @@ https://github.com/Likely7/Veyra-NRVideo, release 2.1.0. Vela is a derivative wo
 - **Nitlink** (MIT, NitLink Contributors 2026): Elgato device identity rule and the non-MK.2 P010 full-range chroma policy.
 - **NVIDIA/nvapi** (MIT): Reflex sleep-mode and marker ABI subset in `Reflex.h`. No NvAPI header or library is included.
 
+## Fonts shipped in `ui/fonts/` (SIL Open Font License 1.1, licence texts beside them)
+
+- IBM Plex Mono, Copyright 2017 IBM Corp.
+- JetBrains Mono, Copyright 2020 The JetBrains Mono Project Authors.
+- Manrope, Copyright 2018 The Manrope Project Authors.
+
 ## Fetched at build time, not stored in this repository
 
 - **Microsoft.Web.WebView2** SDK (NuGet), Microsoft licence: headers and `WebView2LoaderStatic.lib`.

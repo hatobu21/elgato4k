@@ -18,6 +18,7 @@ private:
     void change(const core::Settings& next);
     void showUi(bool visible);
     void flash(const std::string& text);
+    void postMode();
 
     HWND video_ = nullptr;
     UiOverlay overlay_;

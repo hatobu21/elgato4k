@@ -53,6 +53,9 @@ public:
     // Drops everything queued and reports those batches released.
     void discard();
     void setHud(const HudText& hud);
+    // Where the picture goes in the window (device pixels). Windowed layout
+    // puts it in a pane beside the scope column; empty = the whole window.
+    void setViewport(const RECT& rect);
     void setVsync(bool vsync) { vsync_ = vsync; }
 
 private:
@@ -78,6 +81,7 @@ private:
     std::condition_variable cv_;
     std::deque<PresentItem> queue_;
     HudText hud_;
+    RECT viewport_{};
     std::atomic<bool> vsync_{false};
     bool stop_ = false;
 };
