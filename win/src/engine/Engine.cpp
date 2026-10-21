@@ -90,6 +90,7 @@ EngineTelemetry Engine::telemetry() const {
     t.latency = monitor_.snapshot(nowMicros());
     t.intervals.assign(intervals_.begin(), intervals_.end());
     t.color = color_;
+    t.colorDiagnosis = colorDiagnosis_;
     std::lock_guard cadenceLock(cadenceMutex_);
     t.contentFps = cadence_.contentFps();
     t.detectedFps = cadence_.detectedFps();
@@ -526,6 +527,7 @@ void Engine::collectFinished() {
         std::lock_guard lock(mutex_);
         monitor_.onGpuBatch(now, stages, total);
         color_ = autoColor_.current();
+        colorDiagnosis_ = autoColor_.diagnosis();
     }
 }
 

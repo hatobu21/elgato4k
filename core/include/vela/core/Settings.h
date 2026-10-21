@@ -70,7 +70,7 @@ struct Settings {
     LatencySettings latency;
     SuperResSettings superRes;
     HdrSettings hdr;
-    AutoColorConfig color{true, 0.5f, true, true, true, AdaptSpeed::Normal};
+    AutoColorConfig color = [] { AutoColorConfig c; c.enabled = true; return c; }();   // Natural preset
     CaptureSettings capture;
     DisplaySettings display;
 

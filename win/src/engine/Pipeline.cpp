@@ -23,8 +23,9 @@ struct CaptureConstants { uint32_t width, height, pitch, chromaOffset, p010, bt2
 struct AnalysisConstants { uint32_t width, height, hdr; };
 struct ColorConstants {
     uint32_t width, height, mode;
-    float blackPoint, whitePoint, gamma, gainR, gainG, gainB, saturation, peakNits;
+    float blackPoint, whitePoint, gamma, lift, shoulder, gainR, gainG, gainB, saturation, peakNits;
 };
+static_assert(sizeof(ColorConstants) == 13 * 4, "keep in step with ColorApply.hlsl and colorPass_.create");
 struct MotionConstants { uint32_t gridW, gridH, gridSize, flowW, flowH, outW, outH, costThreshold; };
 struct EncodeConstants { uint32_t width, height, inputKind, outputKind; };
 } // namespace
@@ -84,7 +85,7 @@ bool Pipeline::build(gfx::Device& device, nv::NgxCore* ngx, const PipelineConfig
     if (!createResources() || !createDescriptors()) return false;
     if (!capturePass_.create(device, L"CaptureToWorking", 1, 2, 9) ||
         !analysisPass_.create(device, L"Analysis", 1, 1, 3) ||
-        !colorPass_.create(device, L"ColorApply", 1, 1, 11) ||
+        !colorPass_.create(device, L"ColorApply", 1, 1, 13) ||
         !motionPass_.create(device, L"FlowToMotion", 2, 1, 8) ||
         !encodePass_.create(device, L"Encode", 1, 1, 4))
         return false;
@@ -363,7 +364,7 @@ bool Pipeline::process(uint32_t uploadSlot, const capture::Frame& layout, uint32
     timer_.mark(list, slot, GpuStage::Color, false);
     gfx::transition(list, colorTarget, kUav);
     const ColorConstants col{inW_, inH_, colorMode_, color.blackPoint, color.whitePoint, color.gamma,
-        color.gainR, color.gainG, color.gainB, color.saturation,
+        color.lift, color.shoulder, color.gainR, color.gainG, color.gainB, color.saturation,
         config_.signal.masteringPeak > 0 ? config_.signal.masteringPeak : 1000.0f};
     colorPass_.record(list, d, colorSrv_, direct ? colorUavReal_[slot] : colorUavStage_, &col, gfx::groups(inW_), gfx::groups(inH_));
     gfx::uavBarrier(list, colorTarget.get());

@@ -58,6 +58,7 @@ struct EngineTelemetry {
     core::LatencySnapshot latency;
     std::vector<double> intervals;      // recent present intervals, ms, oldest first
     core::ColorParams color;
+    core::ColorDiagnosis colorDiagnosis;        // problems seen in the source picture
     double contentFps = 0, detectedFps = 0;     // game frame rate inside the signal
     uint64_t repeats = 0;                       // repeated pictures skipped
 };
@@ -164,6 +165,7 @@ private:
     core::Micros lastPresented_ = 0;
     EngineState state_;
     core::ColorParams color_;
+    core::ColorDiagnosis colorDiagnosis_;
     std::mutex batchMutex_;
     std::condition_variable batchCv_;
 };

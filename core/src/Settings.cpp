@@ -26,6 +26,12 @@ void Settings::clamp() {
     hdr.middleGray = std::clamp(hdr.middleGray, 10u, 100u);
 
     color.strength = std::clamp(color.strength, 0.0f, 1.0f);
+    if (static_cast<size_t>(color.preset) >= kColorPresetCount) color.preset = ColorPreset::Natural;
+    color.levels = std::clamp(color.levels, 0.0f, 1.0f);
+    color.highlights = std::clamp(color.highlights, 0.0f, 1.0f);
+    color.shadows = std::clamp(color.shadows, 0.0f, 1.0f);
+    color.saturation = std::clamp(color.saturation, -1.0f, 1.0f);
+    color.whiteBalance = std::clamp(color.whiteBalance, 0.0f, 1.0f);
     if (color.speed > AdaptSpeed::Fast) color.speed = AdaptSpeed::Normal;
 
     capture.fps = std::clamp(capture.fps, 0.0, 240.0);

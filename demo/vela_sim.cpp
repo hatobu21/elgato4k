@@ -136,32 +136,54 @@ void printScenario(const Scenario& sc) {
     std::printf("   显存估算      ≈ %.0f MB\n", r.plan.vramEstimateMB);
 }
 
+const char* presetName(ColorPreset p) {
+    static const char* kNames[] = {"自然", "去灰", "压高光", "降饱和", "提亮暗部", "去偏色"};
+    return kNames[static_cast<size_t>(p)];
+}
+
 void colorTrace() {
-    AutoColor ac;
-    AutoColorConfig cfg;
-    cfg.enabled = true;
-    cfg.strength = 0.6f;
-    ac.configure(cfg);
-    auto frame = [](float lo, float hi, float r, float g, float b) {
+    // Flat histogram over [lo, hi], plus `bright` extra samples per bin above 0.85.
+    auto frame = [](float lo, float hi, float r, float g, float b, float chroma, uint32_t bright = 0) {
         ColorStats s;
         for (int i = 0; i < ColorStats::kBins; ++i) {
             const float c = (i + 0.5f) / ColorStats::kBins;
             if (c >= lo && c <= hi) s.luma[size_t(i)] = 1000;
+            if (c >= 0.85f) s.luma[size_t(i)] += bright;
         }
         s.midR = r; s.midG = g; s.midB = b;
         s.highR = r * 4; s.highG = g * 4; s.highB = b * 4;
-        s.meanChroma = 0.12f;
+        s.meanChroma = chroma;
         return s;
     };
-    std::printf("\n自动调色收敛（强度 0.6，速度 正常）：前 2 秒为偏蓝发灰画面，之后切到正常画面\n");
-    std::printf("  时间    黑位    白位    伽马    R增益   B增益   饱和度  切换\n");
-    for (int i = 0; i <= 240; ++i) {
-        const bool second = i >= 120;
-        const auto s = second ? frame(0.0f, 1.0f, 0.2f, 0.2f, 0.2f) : frame(0.14f, 0.82f, 0.19f, 0.2f, 0.225f);
-        const auto& p = ac.update(s, 1.0 / 60);
-        if (i % 15 == 0 || ac.lastWasSceneCut())
-            std::printf("  %4.2fs  %.3f  %.3f  %.3f  %.3f  %.3f  %.3f  %s\n", i / 60.0, p.blackPoint, p.whitePoint,
-                p.gamma, p.gainR, p.gainB, p.saturation, ac.lastWasSceneCut() ? "<- 场景切换" : "");
+    struct Phase { const char* name; ColorStats stats; };
+    const Phase phases[] = {
+        {"偏蓝发灰", frame(0.14f, 0.82f, 0.19f, 0.2f, 0.225f, 0.12f)},
+        {"过曝    ", frame(0.0f, 1.0f, 0.2f, 0.2f, 0.2f, 0.25f, 5000)},
+        {"过饱和  ", frame(0.0f, 1.0f, 0.2f, 0.2f, 0.2f, 0.58f)},
+        {"正常    ", frame(0.0f, 1.0f, 0.2f, 0.2f, 0.2f, 0.28f)},
+    };
+    AutoColor ac;
+    AutoColorConfig cfg;   // Natural preset, full strength
+    cfg.enabled = true;
+    ac.configure(cfg);
+    std::printf("\n自动调色（预设 自然，速度 正常）：每段 3 秒；推荐预设按约 2 秒平滑\n");
+    std::printf("  时间   画面      黑位   白位   伽马   暗部   高光   R增益  B增益  饱和度  推荐\n");
+    for (int i = 0; i < 4 * 180; ++i) {
+        const auto& ph = phases[i / 180];
+        const auto& p = ac.update(ph.stats, 1.0 / 60);
+        if (i % 30 == 29 || ac.lastWasSceneCut())
+            std::printf("  %4.1fs  %s  %.3f  %.3f  %.3f  %.3f  %.3f  %.3f  %.3f  %.3f   %s%s\n", (i + 1) / 60.0, ph.name,
+                p.blackPoint, p.whitePoint, p.gamma, p.lift, p.shoulder, p.gainR, p.gainB, p.saturation,
+                presetName(ac.diagnosis().recommended), ac.lastWasSceneCut() ? "  <- 场景切换" : "");
+    }
+
+    std::printf("\n同一偏蓝发灰画面在各预设下的目标值（强度 100%%）：\n");
+    for (size_t k = 0; k < kColorPresetCount; ++k) {
+        AutoColorConfig c = cfg;
+        applyColorPreset(c, static_cast<ColorPreset>(k));
+        const auto p = AutoColor::estimate(phases[0].stats, c);
+        std::printf("  黑位 %.3f  白位 %.3f  伽马 %.3f  R %.3f  B %.3f  饱和度 %.3f  %s\n",
+            p.blackPoint, p.whitePoint, p.gamma, p.gainR, p.gainB, p.saturation, presetName(c.preset));
     }
 }
 

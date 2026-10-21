@@ -36,6 +36,8 @@
 
   function set(path, value) {
     setPath(view.settings, path, value);
+    // A preset overwrites the fine-tune amounts (the host does the same).
+    if (path === 'color.preset') Object.assign(view.settings.color, view.caps?.colorPresets?.[value]);
     bridge.send({ type: 'set', path, value });
     renderState();
   }
@@ -48,6 +50,11 @@
     'hdr.saturation': (v) => `${v}%`,
     'hdr.middleGray': (v) => `${v}`,
     'color.strength': (v) => `${Math.round(v * 100)}%`,
+    'color.levels': (v) => `${Math.round(v * 100)}%`,
+    'color.highlights': (v) => `${Math.round(v * 100)}%`,
+    'color.shadows': (v) => `${Math.round(v * 100)}%`,
+    'color.saturation': (v) => (Math.abs(v) < 0.005 ? '0' : `${v > 0 ? '+' : '−'}${Math.round(Math.abs(v) * 100)}%`),
+    'color.whiteBalance': (v) => `${Math.round(v * 100)}%`,
     'capture.volume': (v) => `${Math.round(v * 100)}%`,
   };
   const contentName = { auto: '自动', 30: '30 fps', 60: '60 fps', 120: '120 fps' };
@@ -56,6 +63,9 @@
   const res = (w, h) => (w && h ? `${w}×${h}` : '—');
   const hdrName = { passthrough: 'HDR10 直通', rtxHdr: 'RTX HDR', toneMap: '映射为 SDR', sdr: 'SDR' };
   const srName = { videoSr: 'RTX Video', dlss: 'DLSS', none: '—' };
+  const presetName = { natural: '自然', washed: '去灰', overexposed: '压高光', oversaturated: '降饱和', dark: '提亮暗部', cast: '去偏色' };
+  const issueName = { washed: '发灰', overexposed: '过曝', oversaturated: '过饱和', dark: '偏暗', cast: '偏色' };
+  const amountKeys = ['levels', 'highlights', 'shadows', 'saturation', 'whiteBalance'];
   const latencyClass = (v) => (v < 30 ? 'lat-good' : v < 50 ? 'lat-warn' : 'lat-bad');
 
   // ------------------------------------------------------------- rendering
@@ -116,17 +126,19 @@
     $('#rail-fg').textContent = fgOn ? `${p.multiplier}×` : '关';
     $('#rail-sr').textContent = !s.superRes.enabled ? '关' : p?.superRes === 'videoSr' ? 'VSR' : p?.superRes === 'dlss' ? 'DLSS' : '原生';
     $('#rail-hdr').textContent = railHdr[p?.hdr ?? 'sdr'];
-    $('#rail-color').textContent = s.color.enabled ? `${Math.round(s.color.strength * 100)}%` : '关';
+    $('#rail-color').textContent = s.color.enabled ? presetName[s.color.preset] ?? '—' : '关';
     $('[data-open="frameGen"].rail-item').classList.toggle('is-off', !fgOn);
     $('[data-open="superRes"].rail-item').classList.toggle('is-off', !s.superRes.enabled || p?.superRes === 'none');
     $('[data-open="color"].rail-item').classList.toggle('is-off', !s.color.enabled);
-    $('#pill').hidden = !(isFull() && s.latency.hud);
+    $('#pill').hidden = !s.latency.hud;
+    $('#pill').dataset.corner = s.latency.hudCorner;
 
     // frame generation summary + facts
     $('#fg-summary').innerHTML = !s.frameGen.enabled ? '帧生成已关闭，画面按源帧率输出。'
       : p?.frameGenBlocked ? '帧生成暂不可用。'
       : `内容 <strong>${fps(p?.contentFps)} fps</strong> → 输出 <strong>${fps(p?.outputFps)} fps</strong>，每两张不同的画面之间生成 ${p.multiplier - 1} 帧。`;
     renderFgFacts();
+    renderColorAdvice();
 
     // super resolution
     const scaleUp = src && view.display && (view.display.width > src.width * 1.05);
@@ -261,13 +273,43 @@
       $('#fg-detected').textContent = tm.detectedFps > 0
         ? `检测到 ${fps(tm.detectedFps)} fps${mode !== 'auto' ? `（手动 ${contentName[mode]}）` : ''}` : '检测中…';
     }
-    if (view.tab === 'color') renderColor();
+    if (view.tab === 'color') { renderColor(); renderColorAdvice(); }
+  }
+
+  // Preset state, fine-tune availability and the diagnosis banner.
+  function renderColorAdvice() {
+    const c = view.settings.color;
+    const base = view.caps?.colorPresets?.[c.preset];
+    $('#color-tuned').hidden = !base || amountKeys.every((k) => Math.abs(c[k] - base[k]) < 0.005);
+    const hdr = !!view.source?.hdr;
+    $('#color-hdr-hint').hidden = !hdr;
+    for (const f of $$('[data-panel="color"] .sdr-only')) {
+      f.classList.toggle('is-off', hdr);
+      $('input', f).disabled = hdr;
+    }
+    const d = tm?.diagnosis;
+    const rec = d?.recommended;
+    for (const b of $$('#color-presets button')) b.classList.toggle('is-recommended', c.enabled && b.dataset.value === rec);
+    const banner = $('#color-diag');
+    banner.hidden = !c.enabled || !d;
+    if (banner.hidden) return;
+    const issue = issueName[rec];
+    const using = rec === c.preset;
+    $('#color-diag-text').innerHTML = !issue
+      ? `没有明显问题${using ? '' : ' · 推荐「自然」'}`
+      : `<strong>${issue}</strong>${using ? ` · 正在用「${presetName[rec]}」` : ` → 推荐「${presetName[rec]}」`}`;
+    banner.classList.toggle('is-quiet', using);
+    const apply = $('#color-diag-apply');
+    apply.hidden = using;
+    apply.dataset.preset = rec;
   }
 
   const meterDefs = [
     ['黑位', 'blackPoint', 0, 0.08, (v) => v.toFixed(3)],
     ['白位', 'whitePoint', 1, 0.12, (v) => v.toFixed(3)],
     ['中间调', 'gamma', 1, 0.12, (v) => v.toFixed(3)],
+    ['暗部', 'lift', 0, 0.16, (v) => (v > 5e-4 ? `+${v.toFixed(3)}` : '0.000')],
+    ['高光', 'shoulder', 0, -0.16, (v) => (v > 5e-4 ? `−${v.toFixed(3)}` : '0.000')],
     ['红增益', 'gainR', 1, 0.08, (v) => v.toFixed(3)],
     ['蓝增益', 'gainB', 1, 0.08, (v) => v.toFixed(3)],
     ['饱和度', 'saturation', 1, 0.12, (v) => v.toFixed(3)],
@@ -439,6 +481,8 @@
       }
     });
     $('#panel-close').addEventListener('click', closePanel);
+    $('#color-diag-apply').addEventListener('click', (e) => set('color.preset', e.currentTarget.dataset.preset));
+    $('#color-restore').addEventListener('click', () => set('color.preset', view.settings.color.preset));
     $('#side-toggle').addEventListener('click', () => setSide(app.dataset.side === 'collapsed'));
     for (const el of $$('input[data-path], select[data-path]')) {
       const ev = el.type === 'range' ? 'input' : 'change';
@@ -526,12 +570,21 @@
       latency: { hud: true, hudCorner: 1, captureHardwareMs: 0, displayProcessingMs: 0 },
       superRes: { enabled: true, quality: 4, sharpness: 0 },
       hdr: { mode: 'auto', rtxHdr: true, peakNits: 1000, contrast: 100, saturation: 100, middleGray: 50 },
-      color: { enabled: true, strength: 0.5, levels: true, whiteBalance: true, vibrance: true, speed: 'normal' },
+      color: { enabled: true, preset: 'natural', strength: 1, levels: 0.5, highlights: 0.3, shadows: 0.2, saturation: 0.3, whiteBalance: 0.5, speed: 'normal' },
       capture: { device: 'demo-4kpro', mode: 'auto', audio: true, volume: 0.8, muted: false },
       display: { sync: 'vrr', fullscreen: true },
     };
     const caps = { gpu: 'NVIDIA GeForce RTX 5070 Ti', vramMB: 16303, fgMaxMultiplier: 6, videoSr: true, dlssSr: true,
-                   trueHdr: true, opticalFlow: true, hags: true, dlssgVersion: '310.x（演示）' };
+                   trueHdr: true, opticalFlow: true, hags: true, dlssgVersion: '310.x（演示）',
+                   // same table as vela::core::colorPresetAmounts
+                   colorPresets: {
+                     natural: { levels: 0.5, highlights: 0.3, shadows: 0.2, saturation: 0.3, whiteBalance: 0.5 },
+                     washed: { levels: 1, highlights: 0.2, shadows: 0, saturation: 0.5, whiteBalance: 0.5 },
+                     overexposed: { levels: 0.5, highlights: 1, shadows: 0, saturation: 0, whiteBalance: 0.4 },
+                     oversaturated: { levels: 0.4, highlights: 0.3, shadows: 0.1, saturation: -1, whiteBalance: 0.4 },
+                     dark: { levels: 0.5, highlights: 0, shadows: 1, saturation: 0.3, whiteBalance: 0.4 },
+                     cast: { levels: 0.4, highlights: 0.2, shadows: 0.1, saturation: 0.2, whiteBalance: 1 },
+                   } };
     const display = { name: '4K 240 Hz HDR', width: 3840, height: 2160, refreshHz: 240, hdr: true, vrr: true, peakNits: 1000 };
     const devices = [{ path: 'demo-4kpro', name: 'Elgato 4K Pro' }];
     const system = [
@@ -592,7 +645,18 @@
     // telemetry --------------------------------------------------------
     const intervals = [];
     const counters = { sourceFrames: 0, presented: 0, presentedGenerated: 0, droppedGenerated: 0, repeats: 0 };
-    const color = { blackPoint: 0, whitePoint: 1, gamma: 1, gainR: 1, gainG: 1, gainB: 1, saturation: 1 };
+    const color = { blackPoint: 0, whitePoint: 1, gamma: 1, lift: 0, shoulder: 0, gainR: 1, gainG: 1, gainB: 1, saturation: 1 };
+    // The demo "game" moves through a scene with a typical capture problem
+    // every 30 s; values are how strongly each problem shows (0..1).
+    const scenes = [
+      { washed: 0.78, overexposed: 0.05, oversaturated: 0.1, dark: 0.1, cast: 0.3, flat: 0.5, loud: 0 },
+      { washed: 0.1, overexposed: 0.82, oversaturated: 0.15, dark: 0, cast: 0.2, flat: 0.2, loud: 0.1 },
+      { washed: 0.1, overexposed: 0.1, oversaturated: 0.2, dark: 0.2, cast: 0.25, flat: 0.2, loud: 0.15 },
+      { washed: 0.05, overexposed: 0.1, oversaturated: 0.85, dark: 0.1, cast: 0.2, flat: 0, loud: 0.85 },
+      { washed: 0.05, overexposed: 0, oversaturated: 0.1, dark: 0.8, cast: 0.3, flat: 0.3, loud: 0 },
+      { washed: 0.1, overexposed: 0.1, oversaturated: 0.2, dark: 0.1, cast: 0.8, flat: 0.2, loud: 0.1 },
+    ];
+    const diagnosis = { scores: null, recommended: 'natural' };
     let t0 = performance.now();
     const n = (sd = 0.05) => 1 + (Math.random() * 2 - 1) * sd;
     const pct = (base, spread) => ({ p50: base, p95: base * (1 + spread) });
@@ -638,13 +702,29 @@
       counters.presented += count;
       counters.presentedGenerated += Math.round(count * (mult - 1) / mult);
 
-      // auto colour drifts slowly around a mild correction of the demo picture
-      const goal = settings.color.enabled ? settings.color.strength : 0;
-      const wob = Math.sin(now / 2400) * 0.3 + 1;
-      const target = { blackPoint: 0.035 * goal * wob, whitePoint: 1 - 0.05 * goal, gamma: 1 - 0.06 * goal * wob,
-                       gainR: 1 + 0.025 * goal, gainG: 1 - 0.004 * goal, gainB: 1 - 0.04 * goal * wob, saturation: 1 + 0.06 * goal };
-      const a = 1 - Math.exp(-dt / ({ slow: 2, normal: 0.8, fast: 0.3 }[settings.color.speed] ?? 0.8));
+      // auto colour: a rough stand-in for vela::core::AutoColor on the demo scenes
+      const c = settings.color;
+      const sc = { ...scenes[Math.floor(now / 30000) % scenes.length] };
+      if (src.hdr) sc.washed = sc.overexposed = sc.dark = 0;   // tone problems are judged on SDR only
+      const wob = Math.sin(now / 2400) * 0.1 + 1;
+      const on = c.enabled ? c.strength : 0;
+      const wb = 0.8 * c.whiteBalance * sc.cast * on * wob;
+      const target = {
+        blackPoint: 0.06 * sc.washed * c.levels * on, whitePoint: 1 - 0.1 * sc.washed * c.levels * on,
+        gamma: 1 + 0.1 * (sc.overexposed - sc.dark) * c.levels * on,
+        lift: 0.16 * sc.dark * c.shadows * on, shoulder: 0.16 * sc.overexposed * c.highlights * on,
+        gainR: 1 + 0.05 * wb, gainG: 1 - 0.005 * wb, gainB: 1 - 0.08 * wb,
+        saturation: 1 + on * (c.saturation >= 0 ? 0.15 * sc.flat * c.saturation : c.saturation * (0.05 + 0.15 * sc.loud)),
+      };
+      const a = 1 - Math.exp(-dt / ({ slow: 2, normal: 0.8, fast: 0.3 }[c.speed] ?? 0.8));
       for (const k in color) color[k] += (target[k] - color[k]) * a;
+      // diagnosis: 2 s smoothing, Natural is the bar, 0.1 hysteresis
+      const instant = { natural: 0.5, washed: sc.washed, overexposed: sc.overexposed, oversaturated: sc.oversaturated, dark: sc.dark, cast: sc.cast };
+      if (!diagnosis.scores) diagnosis.scores = instant;
+      const ad = 1 - Math.exp(-dt / 2);
+      for (const k in instant) diagnosis.scores[k] += (instant[k] - diagnosis.scores[k]) * ad;
+      const best = Object.keys(diagnosis.scores).reduce((x, y) => (diagnosis.scores[y] > diagnosis.scores[x] ? y : x));
+      if (diagnosis.scores[best] > diagnosis.scores[diagnosis.recommended] + 0.1) diagnosis.recommended = best;
 
       const sorted = intervals.slice(-240).sort((x, y) => x - y);
       emit({ type: 'telemetry', t: {
@@ -656,7 +736,7 @@
         endToEndMs: card + pipeline + scanout + settings.latency.displayProcessingMs,
         fgAddedMs: mult > 1 ? ((mult - 1) / mult) * T + st.frameGen.p50 : 0,
         calibrated: card > 0, droppedSource: 0, ...counters, intervals: intervals.slice(),
-        color: { ...color },
+        color: { ...color }, diagnosis: structuredClone(diagnosis),
       } });
     }
 
@@ -667,6 +747,7 @@
         if (msg.type === 'hello') { publishState(); setInterval(tick, 100); }
         else if (msg.type === 'set') {
           setPath(settings, msg.path, msg.value);
+          if (msg.path === 'color.preset') Object.assign(settings.color, caps.colorPresets[msg.value]);
           if (msg.path === 'frameGen.multiplier' || msg.path === 'frameGen.contentRate' || msg.path.startsWith('capture.') || msg.path.startsWith('display.') ||
               msg.path.startsWith('hdr.') || msg.path.startsWith('superRes.') || msg.path === 'frameGen.enabled') publishState();
         } else if (msg.type === 'command' && msg.name === 'resetStats') {

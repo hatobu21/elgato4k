@@ -17,6 +17,9 @@ struct EnumNames { E value; const char* name; };
 
 constexpr EnumNames<PacingMode> kPacing[] = {{PacingMode::Even, "even"}, {PacingMode::LowLatency, "lowLatency"}};
 constexpr EnumNames<HdrMode> kHdrMode[] = {{HdrMode::Auto, "auto"}, {HdrMode::Off, "off"}};
+constexpr EnumNames<ColorPreset> kPreset[] = {{ColorPreset::Natural, "natural"}, {ColorPreset::Washed, "washed"},
+                                              {ColorPreset::Overexposed, "overexposed"}, {ColorPreset::Oversaturated, "oversaturated"},
+                                              {ColorPreset::Dark, "dark"}, {ColorPreset::Cast, "cast"}};
 constexpr EnumNames<AdaptSpeed> kSpeed[] = {{AdaptSpeed::Slow, "slow"}, {AdaptSpeed::Normal, "normal"}, {AdaptSpeed::Fast, "fast"}};
 constexpr EnumNames<ContentRate> kContent[] = {{ContentRate::Auto, "auto"}, {ContentRate::Fps30, "30"},
                                                 {ContentRate::Fps60, "60"}, {ContentRate::Fps120, "120"}};
@@ -90,10 +93,21 @@ const std::vector<Field>& fields() {
         VELA_FIELD("hdr.saturation", hdr.saturation),
         VELA_FIELD("hdr.middleGray", hdr.middleGray),
         VELA_FIELD("color.enabled", color.enabled),
+        // Setting a preset overwrites the amounts, so it comes first: a saved
+        // file loads the preset, then the user's fine tuning on top.
+        {"color.preset", [](const Settings& s) { return json(nameOf(kPreset, s.color.preset)); },
+         [](Settings& s, const json& j) {
+             ColorPreset p;
+             if (!parse(kPreset, j, p)) return false;
+             applyColorPreset(s.color, p);
+             return true;
+         }},
         VELA_FIELD("color.strength", color.strength),
         VELA_FIELD("color.levels", color.levels),
+        VELA_FIELD("color.highlights", color.highlights),
+        VELA_FIELD("color.shadows", color.shadows),
+        VELA_FIELD("color.saturation", color.saturation),
         VELA_FIELD("color.whiteBalance", color.whiteBalance),
-        VELA_FIELD("color.vibrance", color.vibrance),
         VELA_ENUM("color.speed", color.speed, kSpeed),
         {"capture.device", [](const Settings& s) { return json(narrow(s.capture.devicePath)); },
          [](Settings& s, const json& j) { if (!j.is_string()) return false; s.capture.devicePath = widen(j.get<std::string>()); return true; }},
@@ -153,6 +167,13 @@ std::string stateMessage(const engine::EngineState& st) {
         {"videoSr", st.caps.videoSr}, {"dlssSr", st.caps.dlssSr}, {"trueHdr", st.caps.trueHdr},
         {"opticalFlow", st.caps.opticalFlow}, {"hags", st.caps.hags},
         {"dlssgVersion", st.caps.fgMaxMultiplier >= 2 ? "nvngx_dlssg.dll" : "—"}};
+    json presets = json::object();
+    for (const auto& e : kPreset) {
+        const auto a = colorPresetAmounts(e.value);
+        presets[e.name] = {{"levels", a.levels}, {"highlights", a.highlights}, {"shadows", a.shadows},
+                           {"saturation", a.saturation}, {"whiteBalance", a.whiteBalance}};
+    }
+    caps["colorPresets"] = presets;
     json plan = {
         {"outputWidth", st.plan.outputWidth}, {"outputHeight", st.plan.outputHeight},
         {"superRes", srPathKey(st.plan.superRes)}, {"hdr", hdrPathKey(st.plan.hdr)},
@@ -196,6 +217,9 @@ std::string telemetryMessage(const engine::EngineTelemetry& t) {
     json intervals = json::array();
     for (const double v : t.intervals) intervals.push_back(std::round(v * 100) / 100);
     const auto& c = t.color;
+    json scores = json::object();
+    for (const auto& e : kPreset) scores[e.name] = std::round(t.colorDiagnosis.scores[size_t(e.value)] * 100) / 100;
+    const json diagnosis = {{"scores", scores}, {"recommended", nameOf(kPreset, t.colorDiagnosis.recommended)}};
     json body = {
         {"signalFps", l.signalFps}, {"sourceFps", l.sourceFps}, {"outputFps", l.outputFps},
         {"contentFps", t.contentFps}, {"detectedFps", t.detectedFps}, {"repeats", t.repeats},
@@ -206,7 +230,9 @@ std::string telemetryMessage(const engine::EngineTelemetry& t) {
         {"presentedGenerated", l.presentedGenerated}, {"droppedGenerated", l.droppedGenerated},
         {"intervals", intervals},
         {"color", {{"blackPoint", c.blackPoint}, {"whitePoint", c.whitePoint}, {"gamma", c.gamma},
-                   {"gainR", c.gainR}, {"gainG", c.gainG}, {"gainB", c.gainB}, {"saturation", c.saturation}}}};
+                   {"lift", c.lift}, {"shoulder", c.shoulder},
+                   {"gainR", c.gainR}, {"gainG", c.gainG}, {"gainB", c.gainB}, {"saturation", c.saturation}}},
+        {"diagnosis", diagnosis}};
     return json{{"type", "telemetry"}, {"t", body}}.dump();
 }
 

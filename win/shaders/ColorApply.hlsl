@@ -17,6 +17,8 @@ cbuffer Constants : register(b0) {
     float blackPoint;
     float whitePoint;
     float gamma;
+    float lift;          // shadow toe (SDR), see vela::core::applyLift
+    float shoulder;      // highlight roll-down (SDR), see vela::core::applyShoulder
     float gainR;
     float gainG;
     float gainB;
@@ -29,6 +31,16 @@ float3 adjustSaturation(float3 lin, float3 weights) {
     return max(y + (lin - y) * saturation, 0.0);
 }
 
+// Both leave 0, 0.5 and 1 in place; x is the position inside the half.
+float3 applyLift(float3 v) {
+    float3 x = saturate(v * 2.0);
+    return select(v < 0.5, v + lift * 3.375 * x * (1.0 - x) * (1.0 - x), v);
+}
+float3 applyShoulder(float3 v) {
+    float3 x = saturate(v * 2.0 - 1.0);
+    return select(v > 0.5, v - shoulder * 3.375 * x * x * (1.0 - x), v);
+}
+
 [numthreads(16, 16, 1)]
 void main(uint3 id : SV_DispatchThreadID) {
     if (id.x >= width || id.y >= height) return;
@@ -36,8 +48,9 @@ void main(uint3 id : SV_DispatchThreadID) {
     float3 gains = float3(gainR, gainG, gainB);
 
     if (mode <= 1) {
-        // Levels and mid-tone gamma on encoded values, gains and saturation on light.
+        // Levels, gamma and the two curves on encoded values, gains and saturation on light.
         e = pow(saturate((e - blackPoint) / max(whitePoint - blackPoint, 1e-3)), gamma);
+        e = applyShoulder(applyLift(e));
         float3 lin = adjustSaturation(srgbToLinear(e) * gains, kLuma709);
         output[id.xy] = mode == 0 ? float4(linearToSrgb(lin), 1) : float4(lin, 1);
         return;

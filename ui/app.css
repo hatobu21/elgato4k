@@ -97,7 +97,6 @@ body:not(.host) .app { background: var(--ground); }
 .app[data-mode="windowed"][data-side="collapsed"] .side { display: none; }
 .app[data-mode="windowed"] .rail,
 .app[data-mode="windowed"] .panel-head,
-.app[data-mode="windowed"] .pill,
 .app[data-mode="windowed"] .fs-only { display: none; }
 
 .signal {
@@ -186,11 +185,25 @@ body:not(.host) .app[data-mode="windowed"] .viewport { background: #000; }
 .panel-head { display: flex; align-items: center; justify-content: space-between; padding: 22px 18px 0 24px; font-size: 22px; font-weight: 700; }
 .app[data-mode="fullscreen"] .panels { padding: 14px 24px 24px; }
 
+/* Latency HUD, inside the picture at the chosen corner. In fullscreen the
+   left corners move clear of the rail and the open panel while they show. */
+.viewport { --pill-t: 16px; --pill-b: 16px; --pill-l: 16px; --pill-r: 16px; }
+.app[data-mode="fullscreen"] .viewport {
+  --pill-t: calc(24px + env(safe-area-inset-top, 0px)); --pill-b: calc(24px + env(safe-area-inset-bottom, 0px));
+  --pill-l: calc(24px + var(--gutter-l)); --pill-r: calc(8px + var(--gutter-r));
+}
+.app[data-mode="fullscreen"][data-ui="shown"] .viewport { --pill-l: calc(116px + var(--gutter-l)); }
+.app[data-mode="fullscreen"][data-ui="shown"][data-open] .viewport { --pill-l: calc(116px + var(--gutter-l) + min(380px, 100% - 132px)); }
 .pill {
-  position: absolute; top: calc(24px + env(safe-area-inset-top, 0px)); right: calc(8px + var(--gutter-r)); z-index: 2;
+  position: absolute; z-index: 1;
   display: flex; align-items: center; gap: 12px; height: 38px; padding: 0 16px; border-radius: 19px;
   background: rgba(6, 10, 14, 0.66); font-family: var(--font-mono); font-size: 13.5px; font-variant-numeric: tabular-nums;
+  transition: left .2s ease;
 }
+.pill[data-corner="0"], .pill[data-corner="1"] { top: var(--pill-t); }
+.pill[data-corner="2"], .pill[data-corner="3"] { bottom: var(--pill-b); }
+.pill[data-corner="0"], .pill[data-corner="2"] { left: var(--pill-l); }
+.pill[data-corner="1"], .pill[data-corner="3"] { right: var(--pill-r); }
 .pill-sep { width: 1px; height: 16px; background: var(--line-2); }
 
 /* auto-hide (fullscreen only) */
@@ -243,6 +256,31 @@ select option { background: #12151a; color: #e6eaf0; }
 .checks { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13px; }
 .checks label { display: flex; align-items: center; gap: 7px; cursor: pointer; }
 .checks input { accent-color: var(--accent); width: 15px; height: 15px; margin: 0; }
+
+/* auto colour: diagnosis banner, preset grid, fine tuning */
+.diag {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 11px 12px 11px 14px;
+  border-radius: var(--radius); background: var(--accent-bg); border: 1px solid rgba(255, 181, 71, 0.3);
+}
+.diag.is-quiet { background: var(--key); border-color: var(--line-2); }
+.diag-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; font-size: 13.5px; }
+.diag-label { font-size: 11.5px; color: var(--muted); letter-spacing: 0.05em; }
+.diag-text strong { color: var(--accent-text); font-weight: 700; }
+.btn-accent { flex: none; height: 34px; padding: 0 16px; border-radius: 17px; background: var(--accent); color: #1a1206; font-size: 13px; font-weight: 700; }
+.btn-accent:hover { filter: brightness(1.08); }
+.seg-grid { grid-auto-flow: row; grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; }
+.seg-grid button { position: relative; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 1px; }
+.seg-grid small { font-size: 11px; font-weight: 400; color: var(--muted); }
+.seg-grid button[aria-pressed="true"] small { color: var(--accent-text); opacity: 0.8; }
+.seg-grid button.is-recommended::after {
+  content: "推荐"; position: absolute; top: -7px; right: 6px; height: 15px; padding: 0 5px; border-radius: 8px;
+  font-size: 10px; font-weight: 700; line-height: 15px; background: var(--accent); color: #1a1206;
+}
+.tuned { color: var(--accent-text); letter-spacing: 0; }
+.link { color: var(--accent); font-size: 12px; text-decoration: underline; text-underline-offset: 2px; }
+.tune { display: flex; flex-direction: column; gap: 12px; padding: 14px; border-radius: var(--radius); border: 1px solid var(--line); }
+.tune .field { gap: 4px; }
+.tune .field.is-off { opacity: 0.4; }
 
 .facts { display: grid; grid-template-columns: auto 1fr; gap: 6px 16px; margin: 0; padding-top: 12px; border-top: 1px solid var(--line); font-size: 13px; }
 .facts dt { color: var(--muted); }

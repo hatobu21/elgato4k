@@ -35,6 +35,9 @@
        the page); in a browser the demo picture is drawn here. -->
   <main class="viewport" id="viewport" aria-label="画面">
     <canvas id="demo-picture" class="demo-picture" aria-hidden="true"></canvas>
+    <!-- Demo stand-in for the native HUD, which the presenter draws in the
+         same corner of the picture. -->
+    <div class="pill" id="pill" data-corner="1" hidden><span id="pill-e2e">—</span><span class="pill-sep"></span><span id="pill-fps">—</span></div>
     <div class="nosignal" id="nosignal" hidden>
       <div class="nosignal-title">没有信号</div>
       <p>检查主机是否开机、HDMI 是否接在采集卡的输入口，以及采集卡是否被其他程序占用。</p>
@@ -231,17 +234,53 @@
       <!-- 5. Auto colour -->
       <div class="panel" data-panel="color" data-title="调色" role="tabpanel">
         <div class="row-toggle">
-          <p class="lede">缓慢修正发灰、偏色和过平的画面。明显有意为之的色调（夕阳、红色警报）会保留。</p>
+          <p class="lede">按画面情况缓慢修正。先选一个预设，再按需要微调；明显有意为之的色调（夕阳、红色警报）会保留。</p>
           <label class="switch"><input type="checkbox" id="color-enabled" data-path="color.enabled" aria-label="自动调色开关"><span></span></label>
         </div>
-        <div class="field">
-          <label class="field-label" for="color-strength"><span>强度</span><output id="color-strength-out"></output></label>
-          <input type="range" id="color-strength" min="0" max="1" step="0.05" data-path="color.strength" data-type="float">
+        <div class="diag" id="color-diag" hidden>
+          <div class="diag-text">
+            <span class="diag-label">画面诊断</span>
+            <span id="color-diag-text">分析中…</span>
+          </div>
+          <button class="btn-accent" id="color-diag-apply" hidden>应用</button>
         </div>
-        <div class="checks">
-          <label><input type="checkbox" id="color-levels" data-path="color.levels"> 黑白位与中间调</label>
-          <label><input type="checkbox" id="color-wb" data-path="color.whiteBalance"> 白平衡</label>
-          <label><input type="checkbox" id="color-vib" data-path="color.vibrance"> 鲜艳度</label>
+        <div class="field">
+          <div class="field-label"><span>预设</span><span class="tuned" id="color-tuned" hidden>已微调 · <button class="link" id="color-restore">恢复预设</button></span></div>
+          <div class="seg seg-grid" data-path="color.preset" id="color-presets">
+            <button data-value="natural"><span>自然</span><small>日常</small></button>
+            <button data-value="washed"><span>去灰</span><small>发灰</small></button>
+            <button data-value="overexposed"><span>压高光</span><small>过曝</small></button>
+            <button data-value="oversaturated"><span>降饱和</span><small>过饱和</small></button>
+            <button data-value="dark"><span>提亮暗部</span><small>偏暗</small></button>
+            <button data-value="cast"><span>去偏色</span><small>偏色</small></button>
+          </div>
+        </div>
+        <div class="tune">
+          <div class="field">
+            <label class="field-label" for="color-strength"><span>总强度</span><output id="color-strength-out"></output></label>
+            <input type="range" id="color-strength" min="0" max="1" step="0.05" data-path="color.strength" data-type="float">
+          </div>
+          <div class="field sdr-only">
+            <label class="field-label" for="color-levels"><span>去灰 · 黑白位与中间调</span><output id="color-levels-out"></output></label>
+            <input type="range" id="color-levels" min="0" max="1" step="0.05" data-path="color.levels" data-type="float">
+          </div>
+          <div class="field sdr-only">
+            <label class="field-label" for="color-highlights"><span>压高光</span><output id="color-highlights-out"></output></label>
+            <input type="range" id="color-highlights" min="0" max="1" step="0.05" data-path="color.highlights" data-type="float">
+          </div>
+          <div class="field sdr-only">
+            <label class="field-label" for="color-shadows"><span>提亮暗部</span><output id="color-shadows-out"></output></label>
+            <input type="range" id="color-shadows" min="0" max="1" step="0.05" data-path="color.shadows" data-type="float">
+          </div>
+          <div class="field">
+            <label class="field-label" for="color-saturation"><span>饱和度 · 左压低 右补足</span><output id="color-saturation-out"></output></label>
+            <input type="range" id="color-saturation" min="-1" max="1" step="0.05" data-path="color.saturation" data-type="float">
+          </div>
+          <div class="field">
+            <label class="field-label" for="color-wb"><span>白平衡</span><output id="color-wb-out"></output></label>
+            <input type="range" id="color-wb" min="0" max="1" step="0.05" data-path="color.whiteBalance" data-type="float">
+          </div>
+          <p class="hint" id="color-hdr-hint" hidden>HDR 信号下只调白平衡和饱和度；亮度与对比度请在 HDR 页调整。</p>
         </div>
         <div class="field">
           <div class="field-label"><span>适应速度</span></div>
@@ -284,7 +323,6 @@
     </div>
   </aside>
 
-  <div class="pill" id="pill" hidden><span id="pill-e2e">—</span><span class="pill-sep"></span><span id="pill-fps">—</span></div>
   <div class="toast" id="toast" role="status" hidden></div>
 </div>
 <!--/VELA:BODY-->
