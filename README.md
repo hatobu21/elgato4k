@@ -45,6 +45,8 @@ cmake -S . -B build -G Ninja && cmake --build build
 
 ## Windows 构建
 
+完整的安装、编译、使用和排错步骤见 **[README-Windows.md](README-Windows.md)**。
+
 需要 DLSS SDK、Optical Flow SDK、RTX Video SDK 运行库，详见 [03 · 构建](docs/03-Windows实施计划.md#1-构建半天)。
 
 ```powershell
