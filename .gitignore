@@ -1,0 +1,6 @@
+/build/
+/out/
+/.cache/
+*.cso
+*.user
+.vs/

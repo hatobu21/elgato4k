@@ -1,0 +1,302 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Vela 采集补帧</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<!--VELA:BODY-->
+<div id="app" class="app" data-ui="shown">
+  <!-- Demo picture. In the Windows host the video is a native swap chain
+       underneath this transparent page, and the canvas is removed. -->
+  <canvas id="demo-picture" class="demo-picture" aria-hidden="true"></canvas>
+
+  <header class="topbar">
+    <div class="brand" aria-label="Vela">
+      <svg viewBox="0 0 24 24" class="brand-mark" aria-hidden="true"><path d="M3 5l9 14 9-14" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/><circle cx="12" cy="19" r="1.6" fill="currentColor"/></svg>
+      <span>Vela</span>
+    </div>
+    <div class="chain" id="chain" aria-live="polite">
+      <span class="chain-dot" id="signal-dot"></span>
+      <span class="chain-device" id="chain-device">Elgato 4K Pro</span>
+      <span class="chain-sep" aria-hidden="true">›</span>
+      <span class="chain-in" id="chain-in">—</span>
+      <span class="chain-arrow" aria-hidden="true">→</span>
+      <span class="chain-out" id="chain-out">—</span>
+    </div>
+    <div class="demo-flag" id="demo-flag" hidden>演示模式 · 数据为模拟</div>
+  </header>
+
+  <aside class="hud" id="hud" hidden aria-label="延迟监控">
+    <div class="hud-main">
+      <span class="hud-value" id="hud-e2e">—</span><span class="hud-unit">ms</span>
+    </div>
+    <div class="hud-label" id="hud-label">端到端估算</div>
+    <dl class="hud-grid">
+      <div><dt>输出</dt><dd id="hud-fps">—</dd></div>
+      <div><dt>源</dt><dd id="hud-src">—</dd></div>
+      <div><dt>管线 P95</dt><dd id="hud-p95">—</dd></div>
+      <div><dt>GPU</dt><dd id="hud-gpu">—</dd></div>
+    </dl>
+    <canvas class="hud-spark" id="hud-spark" width="220" height="40"></canvas>
+  </aside>
+
+  <nav class="dock" id="dock" aria-label="功能">
+    <div class="dock-item dock-fg" data-feature="frameGen">
+      <button class="dock-switch" data-toggle="frameGen.enabled" aria-label="开关补帧"><span></span></button>
+      <button class="dock-open" data-open="frameGen">
+        <span class="dock-label">补帧</span>
+        <span class="dock-value" id="dock-fg">2×</span>
+      </button>
+      <div class="dock-stepper">
+        <button data-step="-1" aria-label="降低倍数">−</button>
+        <button data-step="1" aria-label="提高倍数">+</button>
+      </div>
+    </div>
+    <div class="dock-item" data-feature="latency">
+      <button class="dock-open" data-open="latency">
+        <span class="dock-label">延迟</span>
+        <span class="dock-value dock-num" id="dock-latency">—</span>
+      </button>
+    </div>
+    <div class="dock-item" data-feature="superRes">
+      <button class="dock-switch" data-toggle="superRes.enabled" aria-label="开关超分"><span></span></button>
+      <button class="dock-open" data-open="superRes">
+        <span class="dock-label">超分</span>
+        <span class="dock-value" id="dock-sr">—</span>
+      </button>
+    </div>
+    <div class="dock-item" data-feature="hdr">
+      <button class="dock-open" data-open="hdr">
+        <span class="dock-label">HDR</span>
+        <span class="dock-value" id="dock-hdr">—</span>
+      </button>
+    </div>
+    <div class="dock-item" data-feature="color">
+      <button class="dock-switch" data-toggle="color.enabled" aria-label="开关自动调色"><span></span></button>
+      <button class="dock-open" data-open="color">
+        <span class="dock-label">调色</span>
+        <span class="dock-value" id="dock-color">—</span>
+      </button>
+    </div>
+    <div class="dock-tools">
+      <button class="icon-btn" data-open="device" aria-label="设备与显示" title="设备与显示">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 21h8M12 17v4"/></svg>
+      </button>
+      <button class="icon-btn" data-command="toggleFullscreen" aria-label="全屏" title="全屏 (Alt+Enter)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+      <button class="icon-btn" data-command="hideUi" aria-label="隐藏界面" title="隐藏界面 (Home)">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 9l6 6 6-6"/></svg>
+      </button>
+    </div>
+  </nav>
+
+  <section class="drawer" id="drawer" hidden aria-label="详细设置">
+    <div class="drawer-head">
+      <div class="tabs" role="tablist" id="tabs">
+        <button role="tab" data-tab="frameGen">补帧</button>
+        <button role="tab" data-tab="latency">延迟</button>
+        <button role="tab" data-tab="superRes">超分</button>
+        <button role="tab" data-tab="hdr">HDR</button>
+        <button role="tab" data-tab="color">调色</button>
+        <button role="tab" data-tab="device">设备</button>
+      </div>
+      <button class="icon-btn drawer-close" id="drawer-close" aria-label="关闭">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+      </button>
+    </div>
+
+    <div class="drawer-body">
+      <!-- 1. Frame generation -->
+      <div class="panel" data-panel="frameGen" role="tabpanel">
+        <div class="panel-title">
+          <h2>DLSS 帧生成</h2>
+          <label class="switch"><input type="checkbox" id="fg-enabled" data-path="frameGen.enabled"><span></span></label>
+        </div>
+        <p class="lede" id="fg-summary">—</p>
+        <div class="field">
+          <div class="field-label">倍数</div>
+          <div class="seg seg-wide" id="fg-multiplier" data-path="frameGen.multiplier" data-type="int">
+            <button data-value="2">2×</button><button data-value="3">3×</button><button data-value="4">4×</button><button data-value="5">5×</button><button data-value="6">6×</button>
+          </div>
+          <p class="hint" id="fg-multiplier-hint"></p>
+        </div>
+        <div class="field">
+          <div class="field-label">帧节奏</div>
+          <div class="seg" data-path="frameGen.pacing">
+            <button data-value="even">均匀</button><button data-value="lowLatency">低延迟</button>
+          </div>
+          <p class="hint">均匀：每帧间隔相同，画面最顺。低延迟：生成帧排得更紧，真实帧更早上屏，动态略不均匀。</p>
+        </div>
+        <div class="field" id="fg-compression-field">
+          <label class="field-label" for="fg-compression">压缩量 <output id="fg-compression-out"></output></label>
+          <input type="range" id="fg-compression" min="0" max="0.75" step="0.05" data-path="frameGen.compression" data-type="float">
+        </div>
+        <div class="row-toggle">
+          <div><div class="row-title">NVIDIA Reflex</div><div class="hint">驱动低延迟模式与延迟标记。采集画面的到达时间由主机决定，所以不使用 Reflex 的等待。</div></div>
+          <label class="switch"><input type="checkbox" id="fg-reflex" data-path="frameGen.reflex"><span></span></label>
+        </div>
+        <div class="row-toggle">
+          <div><div class="row-title">性能模式</div><div class="hint">DLSS-G 轻量候选混合，帧生成耗时约减半。需要支持它的运行库，其他版本会忽略。</div></div>
+          <label class="switch"><input type="checkbox" id="fg-perf" data-path="frameGen.performanceMode"><span></span></label>
+        </div>
+        <dl class="facts" id="fg-facts"></dl>
+      </div>
+
+      <!-- 2. Latency -->
+      <div class="panel" data-panel="latency" role="tabpanel">
+        <div class="panel-title"><h2>延迟监控</h2></div>
+        <div class="big-readout">
+          <div><span class="big-num" id="lat-e2e">—</span><span class="big-unit">ms</span></div>
+          <div class="big-caption" id="lat-caption">端到端估算</div>
+        </div>
+        <div class="breakdown" id="lat-breakdown" aria-label="延迟构成"></div>
+        <ul class="legend" id="lat-legend"></ul>
+        <div class="field">
+          <div class="field-label">帧间隔（最近 4 秒）</div>
+          <canvas class="spark" id="lat-spark" width="600" height="96"></canvas>
+          <div class="spark-axis"><span id="lat-spark-min"></span><span id="lat-spark-max"></span></div>
+        </div>
+        <table class="stages">
+          <thead><tr><th>阶段</th><th>P50</th><th>P95</th></tr></thead>
+          <tbody id="lat-stages"></tbody>
+        </table>
+        <dl class="facts" id="lat-counters"></dl>
+        <div class="row-toggle">
+          <div><div class="row-title">画面角标</div><div class="hint">在画面上常驻显示延迟和帧率。快捷键 L。</div></div>
+          <label class="switch"><input type="checkbox" id="lat-hud" data-path="latency.hud"><span></span></label>
+        </div>
+        <div class="field">
+          <div class="field-label">角标位置</div>
+          <div class="seg" data-path="latency.hudCorner" data-type="int">
+            <button data-value="0">左上</button><button data-value="1">右上</button><button data-value="2">左下</button><button data-value="3">右下</button>
+          </div>
+        </div>
+        <div class="field two">
+          <label><span class="field-label">采集卡延迟 (ms)</span><input type="number" id="lat-card" min="0" max="100" step="0.5" data-path="latency.captureHardwareMs" data-type="float"></label>
+          <label><span class="field-label">显示器延迟 (ms)</span><input type="number" id="lat-display" min="0" max="100" step="0.5" data-path="latency.displayProcessingMs" data-type="float"></label>
+        </div>
+        <p class="hint">软件只能测到“采集卡回调 → 呈现”这一段。采集卡和显示器自身的延迟需要用外部方法测一次后填在这里，端到端数字才完整。</p>
+        <button class="btn-quiet" data-command="resetStats">重置统计</button>
+      </div>
+
+      <!-- 3. Super resolution -->
+      <div class="panel" data-panel="superRes" role="tabpanel">
+        <div class="panel-title">
+          <h2>超分辨率</h2>
+          <label class="switch"><input type="checkbox" id="sr-enabled" data-path="superRes.enabled"><span></span></label>
+        </div>
+        <p class="lede" id="sr-summary">—</p>
+        <p class="hint">引擎随画面自动选择：SDR 用 RTX Video 超分（为视频设计，只接受 SDR），HDR10 用 DLSS 超分。</p>
+        <div class="field">
+          <div class="field-label">RTX Video 质量</div>
+          <div class="seg" data-path="superRes.quality" data-type="int">
+            <button data-value="1">1</button><button data-value="2">2</button><button data-value="3">3</button><button data-value="4">4</button>
+          </div>
+        </div>
+        <div class="field">
+          <label class="field-label" for="sr-sharp">DLSS 锐化 <output id="sr-sharp-out"></output></label>
+          <input type="range" id="sr-sharp" min="0" max="1" step="0.05" data-path="superRes.sharpness" data-type="float">
+        </div>
+      </div>
+
+      <!-- 4. HDR -->
+      <div class="panel" data-panel="hdr" role="tabpanel">
+        <div class="panel-title"><h2>HDR</h2></div>
+        <p class="lede" id="hdr-summary">—</p>
+        <div class="field">
+          <div class="field-label">模式</div>
+          <div class="seg" data-path="hdr.mode">
+            <button data-value="auto">自动</button><button data-value="off">始终 SDR</button>
+          </div>
+        </div>
+        <div class="row-toggle">
+          <div><div class="row-title">RTX Video HDR</div><div class="hint">SDR 信号在 HDR 显示器上转换为 HDR。</div></div>
+          <label class="switch"><input type="checkbox" id="hdr-rtx" data-path="hdr.rtxHdr"><span></span></label>
+        </div>
+        <div class="field">
+          <label class="field-label" for="hdr-peak">峰值亮度 <output id="hdr-peak-out"></output></label>
+          <input type="range" id="hdr-peak" min="400" max="2000" step="50" data-path="hdr.peakNits" data-type="int">
+        </div>
+        <div class="field">
+          <label class="field-label" for="hdr-contrast">对比度 <output id="hdr-contrast-out"></output></label>
+          <input type="range" id="hdr-contrast" min="0" max="200" step="5" data-path="hdr.contrast" data-type="int">
+        </div>
+        <div class="field">
+          <label class="field-label" for="hdr-sat">饱和度 <output id="hdr-sat-out"></output></label>
+          <input type="range" id="hdr-sat" min="0" max="200" step="5" data-path="hdr.saturation" data-type="int">
+        </div>
+        <div class="field">
+          <label class="field-label" for="hdr-gray">中灰 <output id="hdr-gray-out"></output></label>
+          <input type="range" id="hdr-gray" min="10" max="100" step="1" data-path="hdr.middleGray" data-type="int">
+        </div>
+        <dl class="facts" id="hdr-facts"></dl>
+      </div>
+
+      <!-- 5. Auto colour -->
+      <div class="panel" data-panel="color" role="tabpanel">
+        <div class="panel-title">
+          <h2>自动调色</h2>
+          <label class="switch"><input type="checkbox" id="color-enabled" data-path="color.enabled"><span></span></label>
+        </div>
+        <p class="lede">分析每一帧的亮度分布和色偏，缓慢修正发灰、偏色和过平的画面。明显是有意为之的色调（夕阳、红色警报）会保留。</p>
+        <div class="field">
+          <label class="field-label" for="color-strength">强度 <output id="color-strength-out"></output></label>
+          <input type="range" id="color-strength" min="0" max="1" step="0.05" data-path="color.strength" data-type="float">
+        </div>
+        <div class="checks">
+          <label><input type="checkbox" id="color-levels" data-path="color.levels"> 黑白位与中间调</label>
+          <label><input type="checkbox" id="color-wb" data-path="color.whiteBalance"> 白平衡</label>
+          <label><input type="checkbox" id="color-vib" data-path="color.vibrance"> 鲜艳度</label>
+        </div>
+        <div class="field">
+          <div class="field-label">适应速度</div>
+          <div class="seg" data-path="color.speed">
+            <button data-value="slow">慢</button><button data-value="normal">正常</button><button data-value="fast">快</button>
+          </div>
+        </div>
+        <div class="field-label">当前修正</div>
+        <div class="meters" id="color-meters"></div>
+      </div>
+
+      <!-- 6. Device -->
+      <div class="panel" data-panel="device" role="tabpanel">
+        <div class="panel-title"><h2>设备与显示</h2></div>
+        <div class="field">
+          <label class="field-label" for="dev-device">采集设备</label>
+          <select id="dev-device" data-path="capture.device"></select>
+        </div>
+        <div class="field">
+          <label class="field-label" for="dev-mode">采集格式</label>
+          <select id="dev-mode" data-path="capture.mode"></select>
+          <p class="hint">自动：按信号选择分辨率和帧率；HDR 信号用 P010，SDR 用 NV12。</p>
+        </div>
+        <div class="row-toggle">
+          <div><div class="row-title">声音</div><div class="hint">采集卡音频直通到默认输出设备。</div></div>
+          <label class="switch"><input type="checkbox" id="dev-audio" data-path="capture.audio"><span></span></label>
+        </div>
+        <div class="field">
+          <label class="field-label" for="dev-volume">音量 <output id="dev-volume-out"></output></label>
+          <input type="range" id="dev-volume" min="0" max="1" step="0.01" data-path="capture.volume" data-type="float">
+        </div>
+        <div class="field">
+          <div class="field-label">同步</div>
+          <div class="seg" data-path="display.sync">
+            <button data-value="vrr">VRR</button><button data-value="vsync">垂直同步</button><button data-value="tearing">允许撕裂</button>
+          </div>
+        </div>
+        <div class="field-label">系统检查</div>
+        <ul class="checklist" id="dev-checks"></ul>
+      </div>
+    </div>
+  </section>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+</div>
+<!--/VELA:BODY-->
+<script src="app.js"></script>
+</body>
+</html>
