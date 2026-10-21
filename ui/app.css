@@ -1,7 +1,8 @@
 /* Two layouts, one set of controls.
    Windowed (B, monitor): signal strip / picture pane + interval strip / scope column.
    Fullscreen (D, rail): picture fills the screen, rail on the left, one panel next to it.
-   Single dark look on purpose: the page always sits on a game picture. */
+   One accent for both, the amber tally light. Single dark look on purpose:
+   the page always sits on a game picture. */
 
 @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-400.woff2") format("woff2"); font-weight: 400; font-display: swap; }
 @font-face { font-family: "IBM Plex Mono"; src: url("fonts/ibm-plex-mono-500.woff2") format("woff2"); font-weight: 500; font-display: swap; }
@@ -43,7 +44,7 @@
   --font-ui: var(--cjk);
   --font-mono: "IBM Plex Mono", "Cascadia Mono", ui-monospace, monospace;
 }
-/* ---- D: glass rail, teal ---- */
+/* ---- D: glass rail; same amber tally as B ---- */
 .app[data-mode="fullscreen"] {
   --ground: #04070a;
   --surface: rgba(6, 10, 14, 0.86);
@@ -53,9 +54,9 @@
   --text: #e9f1f2;
   --muted: #9aa9ad;
   --faint: #66767a;
-  --accent: #45d3c4;
-  --accent-bg: rgba(69, 211, 196, 0.14);
-  --accent-text: #45d3c4;
+  --accent: #ffb547;
+  --accent-bg: rgba(255, 181, 71, 0.14);
+  --accent-text: #ffd08a;
   --data: #9ed6ff;
   --radius: 12px;
   --radius-lg: 22px;
